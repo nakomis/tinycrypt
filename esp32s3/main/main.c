@@ -202,11 +202,18 @@ int ctap_user_presence_test(uint32_t delay_ms)
         return 2;
     ESP_LOGI(TAG, "user presence requested: press BOOT");
     uint32_t start = millis();
+    uint32_t next_keepalive = start;
     bool seen_released = false;
     while (millis() - start < delay_ms)
     {
-        ctaphid_update_status(CTAPHID_STATUS_UPNEEDED);
-        if (!pump(100))
+        // KEEPALIVE(UPNEEDED) every 100 ms, as the spec asks; sample the button
+        // every ~5 ms in between so a quick tap isn't missed.
+        if ((int32_t)(millis() - next_keepalive) >= 0)
+        {
+            ctaphid_update_status(CTAPHID_STATUS_UPNEEDED);
+            next_keepalive += 100;
+        }
+        if (!pump(5))
         {
             ESP_LOGI(TAG, "presence cancelled by host");
             return 0;
