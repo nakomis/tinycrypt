@@ -96,3 +96,8 @@ __pycache__/
 # Mac sim state (master secret, resident keys, counter)
 sim-state/
 *.bin
+
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved

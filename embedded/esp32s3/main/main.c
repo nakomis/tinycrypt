@@ -34,6 +34,9 @@
 #include "log.h"
 #include "storage.h"
 #include "util.h"
+#ifdef TINYCRYPT_SE_SELFTEST
+#include "se_selftest.h"
+#endif
 #include APP_CONFIG
 
 // A board with secure boot or flash encryption is a release board; the
@@ -380,6 +383,9 @@ void app_main(void)
     printf("%s", TINYCRYPT_SOFT_KEY_BANNER);
     snprintf(serial_string, sizeof(serial_string), "0001-rr%d", (int)esp_reset_reason());
     report_last_crash();
+#ifdef TINYCRYPT_SE_SELFTEST
+    se_selftest_run();
+#endif
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)

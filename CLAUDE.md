@@ -36,8 +36,14 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
 - **CI**: the "Protect main" ruleset requires a check named exactly `CI Status`.
 - **Software key is INSECURE, TEST ONLY**: gated behind `TINYCRYPT_INSECURE_SOFT_KEY`, loud boot
   banner, must not build in release config. Only ever register it against the read-only Identity Center test user.
-- Watch signs with CryptoKit, which hashes its input with SHA-256 — verifiers must compare against
-  the digest, not the raw nonce.
+- **Watch signature convention** (CRYPT-10, proven with a real Secure Enclave key): the watch signs
+  with `SecureEnclave.P256.Signing.PrivateKey.signature(for: message)`, which ECDSA-signs
+  **SHA-256(message)**, never the message itself. The key side hashes, then verifies the digest
+  (`port/presence_sig.c`: micro-ecc; mbedTLS `mbedtls_ecdsa_verify`; ATECC `atcab_verify_extern`/`_stored`).
+  Formats are raw, no DER: public key `X‖Y` (64 bytes, `x963Representation` minus the `04`),
+  signature `r‖s` (64 bytes, `rawRepresentation`). High-S signatures are accepted, as CryptoKit does.
+  The frozen vector is `embedded/tests/vectors/se_p256.json`, made by `watch/tools/se-vector`
+  (`swift run --package-path watch/tools/se-vector se-vector`; regenerate only on purpose).
 
 ## Architecture diagrams
 

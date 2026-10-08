@@ -34,10 +34,15 @@ jobs:
           cmake -S . -B build -DTINYCRYPT_INSECURE_SOFT_KEY=ON
           cmake --build build -j
 
-      - name: CTAP2 tests and build guards
+      - name: CTAP2, signature interop and build-guard tests
         run: |
           python -m pip install -r tests/requirements.txt
           python -m pytest -v tests
+
+      # Compile check only: CI runners have no Secure Enclave to run it on.
+      - name: Build the Secure Enclave vector generator
+        working-directory: watch/tools/se-vector
+        run: swift build
 
   esp32s3:
     name: ESP32-S3 firmware

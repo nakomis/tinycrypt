@@ -19,3 +19,12 @@ target_link_libraries(solo_core PUBLIC PkgConfig::SODIUM)
 
 add_executable(tinycrypt-sim sim/sim_main.c)
 target_link_libraries(tinycrypt-sim PRIVATE solo_core)
+
+# Our own portable code: built with warnings on, unlike the upstream core.
+add_library(tinycrypt_port STATIC ${TINYCRYPT_PORT_SOURCES})
+target_link_libraries(tinycrypt_port PUBLIC solo_core)
+target_compile_options(tinycrypt_port PRIVATE -Wall -Wextra -Werror)
+
+add_executable(tinycrypt-sigcheck sim/sigcheck_main.c)
+target_link_libraries(tinycrypt-sigcheck PRIVATE tinycrypt_port)
+target_compile_options(tinycrypt-sigcheck PRIVATE -Wall -Wextra -Werror)
