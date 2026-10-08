@@ -260,6 +260,11 @@ void ctap_overwrite_rk(int index, CTAP_residentKey *rk)
     ctap_store_rk(index, rk);
 }
 
+void device_read_aaguid(uint8_t *dst)
+{
+    memmove(dst, TINYCRYPT_AAGUID, 16);
+}
+
 void device_reboot(void)
 {
     fprintf(stderr, "reboot requested, exiting\n");

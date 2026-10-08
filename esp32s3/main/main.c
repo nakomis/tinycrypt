@@ -133,6 +133,11 @@ void delay(uint32_t ms)
     vTaskDelay(pdMS_TO_TICKS(ms));
 }
 
+void device_read_aaguid(uint8_t *dst)
+{
+    memmove(dst, TINYCRYPT_AAGUID, 16);
+}
+
 void device_reboot(void)
 {
     esp_restart();

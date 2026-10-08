@@ -13,8 +13,14 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
 - **Portable CTAP2 core + ports**: transport (USB HID | socket for the Mac sim), crypto/keystore
   (ATECC608 | software key), presence (watch approval | button | auto-approve in tests), notifier
   (IoT Core → SNS → APNs). The same core builds for the ESP32-S3 and natively on macOS.
-- **Don't write CTAP2 from scratch** — port an existing core. Check the licence first: this repo is
-  CC0, so AGPL code (pico-fido, I believe) can't be copied in; SoloKeys solo1 (Apache-2.0/MIT) is the candidate.
+- **CTAP2 core is SoloKeys solo1** (Apache-2.0 OR MIT), a submodule in `third_party/solo1`; never
+  copy its code into our CC0 tree. Ports override its `__attribute__((weak))` device hooks; the
+  ESP32 `main` component is `WHOLE_ARCHIVE` so the strong ones always win.
+- **ESP32-S3 gotchas**: the key is on the *native* USB port, not the UART one. Short FreeRTOS waits
+  need `CONFIG_FREERTOS_HZ=1000` (at 100 Hz `pdMS_TO_TICKS(1)` is 0, which once dropped every
+  multi-packet CTAPHID reply). After flashing over the native port, press RST; a USB reset leaves
+  it in download mode.
+- **CI**: the "Protect main" ruleset requires a check named exactly `CI Status`.
 - **Software key is INSECURE, TEST ONLY**: gated behind `TINYCRYPT_INSECURE_SOFT_KEY`, loud boot
   banner, must not build in release config. Only ever register it against the read-only Identity Center test user.
 - Watch signs with CryptoKit, which hashes its input with SHA-256 — verifiers must compare against

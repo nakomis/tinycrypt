@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  mac-sim:
+    name: Mac sim + python-fido2
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch solo1 and the libraries it builds
+        run: |
+          git submodule update --init third_party/solo1
+          git -C third_party/solo1 submodule update --init crypto/cifra crypto/micro-ecc crypto/tiny-AES-c tinycbor
+
+      - name: Install libsodium
+        run: brew install libsodium
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+
+      - name: Build the sim (INSECURE soft key)
+        run: |
+          cmake -S . -B build -DTINYCRYPT_INSECURE_SOFT_KEY=ON
+          cmake --build build -j
+
+      - name: CTAP2 tests and build guards
+        run: |
+          python -m pip install -r tests/requirements.txt
+          python -m pytest -v tests
+
+  esp32s3:
+    name: ESP32-S3 firmware
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch solo1 and the libraries it builds
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule update --init third_party/solo1
+          git -C third_party/solo1 submodule update --init crypto/cifra crypto/micro-ecc crypto/tiny-AES-c tinycbor
+
+      - name: Build soft-key test firmware
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          cd esp32s3
+          idf.py -DTINYCRYPT_INSECURE_SOFT_KEY=ON build
+
+      - name: Release build must refuse the soft key
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          cd esp32s3
+          if idf.py -B build-release -DTINYCRYPT_RELEASE=ON -DTINYCRYPT_INSECURE_SOFT_KEY=ON reconfigure > release.log 2>&1; then
+            echo "release build accepted the INSECURE soft key"; exit 1
+          fi
+          grep -q "must never be built in a release configuration" release.log
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No references to the old repo name
+        run: |
+          if grep -rn "tiny-crypt" --exclude-dir=.git --exclude-dir=third_party .; then
+            echo "found 'tiny-crypt': the repo is now 'tinycrypt'"; exit 1
+          fi
+
+  # The "Protect main" ruleset requires a check with exactly this name.
+  ci-status:
+    name: CI Status
+    if: always()
+    needs: [mac-sim, esp32s3, lint]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All jobs passed
+        run: |
+          echo 'mac-sim=${{ needs.mac-sim.result }} esp32s3=${{ needs.esp32s3.result }} lint=${{ needs.lint.result }}'
+          test '${{ needs.mac-sim.result }}' = success
+          test '${{ needs.esp32s3.result }}' = success
+          test '${{ needs.lint.result }}' = success

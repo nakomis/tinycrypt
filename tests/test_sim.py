@@ -37,7 +37,7 @@ def authenticate(device, server, credentials):
 def test_get_info_reports_fido2(sim):
     info = Ctap2(sim.device()).get_info()
     assert "FIDO_2_0" in info.versions
-    assert len(info.aaguid) == 16
+    assert str(info.aaguid) == "f3751ba0-8b97-47ac-aba7-d1c15c36fecf"
 
 
 def test_register_then_authenticate(sim):
