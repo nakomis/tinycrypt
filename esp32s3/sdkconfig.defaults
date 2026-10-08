@@ -5,5 +5,8 @@ CONFIG_TINYUSB_HID_COUNT=1
 CONFIG_TINYUSB_CDC_ENABLED=n
 CONFIG_TINYUSB_MSC_ENABLED=n
 
+# 1 ms ticks: the port's short waits (pdMS_TO_TICKS(1..5)) are 0 at 100 Hz.
+CONFIG_FREERTOS_HZ=1000
+
 # solo1 keeps large CTAP buffers on the stack.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

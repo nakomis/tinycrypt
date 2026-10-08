@@ -107,10 +107,13 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
 
 // ---- transport hooks for the core ------------------------------------------
 
+// Multi-packet replies queue reports back to back, so wait for the IN
+// endpoint to drain the previous one (time-based: a tick may be longer than 1 ms).
 void usbhid_send(uint8_t *msg)
 {
-    for (int i = 0; i < 100 && !tud_hid_ready(); i++)
-        vTaskDelay(pdMS_TO_TICKS(1));
+    int64_t until = esp_timer_get_time() + 100 * 1000;
+    while (!tud_hid_ready() && esp_timer_get_time() < until)
+        vTaskDelay(1);
     if (!tud_hid_report(0, msg, REPORT_SIZE))
         ESP_LOGW(TAG, "IN report dropped");
 }
