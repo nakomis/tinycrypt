@@ -11,8 +11,11 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
 ## Key architectural decisions
 
 - **Portable CTAP2 core + ports**: transport (USB HID | socket for the Mac sim), crypto/keystore
-  (ATECC608 | software key), presence (watch approval | button | auto-approve in tests), notifier
-  (IoT Core → SNS → APNs). The same core builds for the ESP32-S3 and natively on macOS.
+  (ATECC608 | software key), presence, notifier (IoT Core → SNS → APNs). The same core builds for
+  the ESP32-S3 and natively on macOS.
+- **Presence is button OR watch** (CRYPT-13): a physical button wired to the device and the watch
+  approval are both armed, and the first to respond wins. The button must always work on its own;
+  the watch is a convenience, not a stronger factor. Tests use auto-approve or deny.
 - **CTAP2 core is SoloKeys solo1** (Apache-2.0 OR MIT), a submodule in `third_party/solo1`; never
   copy its code into our CC0 tree. Ports override its `__attribute__((weak))` device hooks; the
   ESP32 `main` component is `WHOLE_ARCHIVE` so the strong ones always win.
