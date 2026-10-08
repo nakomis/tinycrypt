@@ -1,0 +1,21 @@
+{
+  "cases" : [
+    {
+      "message" : "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "name" : "fixed nonce 00..1f",
+      "sha256" : "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+      "sig" : "7845ec5bfc0766cd78a3e4395ff65c4ce71c3edcb3a4e221cc6686a0e86083fd1475b85088ef49c0561abbf8a7c9ede591494186fe408ff409b3db733003df84"
+    },
+    {
+      "message" : "3de3949c9a5d3a80c0a1bc93c8622bc602b3a04e2e47b5271d6c68510bbfd888",
+      "name" : "random nonce",
+      "sha256" : "81f7fef4b8c193cb1b7e03a238485bb083ee15af844a6cee1c7e8d8e939cc31a",
+      "sig" : "a1892e72c5910461912d09e58be9e1734560faed028a196e784bbe29f6d9ed6432aaf82e103e510787810e5f2cd2b70d382499a279e1c90add8c46332050f22d"
+    }
+  ],
+  "description" : "P-256 signatures from a real Secure Enclave key via CryptoKit signature(for: Data). The signed value is SHA-256(message). Formats: pub = X||Y (64 bytes), sig = r||s (64 bytes).",
+  "generated" : "2026-10-08T15:52:26Z",
+  "platform" : "macOS Version 26.6.2 (Build 25G83)",
+  "pub" : "931800edccd081541c37ab981c61b4c3b61f059cc6531bb9dd1a2ba164777eff42f2c54a5aae7d7cadba739d24286dbca78ab3f8ee33d9053174df45915ac6f6",
+  "source" : "secure-enclave"
+}

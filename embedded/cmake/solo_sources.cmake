@@ -41,6 +41,11 @@ set(SOLO_CORE_SOURCES
   ${SOLO1}/tinycbor/src/cborvalidation.c
 )
 
+# tinycrypt's own portable code (CC0), shared by the sim and the ESP32 build.
+set(TINYCRYPT_PORT_SOURCES
+  ${TINYCRYPT_ROOT}/port/presence_sig.c
+)
+
 set(SOLO_CORE_INCLUDES
   ${TINYCRYPT_ROOT}/port
   ${SOLO1}/fido2

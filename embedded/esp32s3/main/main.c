@@ -34,6 +34,9 @@
 #include "log.h"
 #include "storage.h"
 #include "util.h"
+#ifdef TINYCRYPT_SE_SELFTEST
+#include "se_selftest.h"
+#endif
 #include APP_CONFIG
 
 // A board with secure boot or flash encryption is a release board; the
@@ -351,6 +354,10 @@ static void report_last_crash(void)
 
 static void ctap_task(void *arg)
 {
+#ifdef TINYCRYPT_SE_SELFTEST
+    // Here rather than app_main: two ECDSA verifies need more than the main task's 3.5 KB stack.
+    se_selftest_run();
+#endif
     ctaphid_init();
     ctap_init();
     ESP_LOGI(TAG, "CTAP core ready");
