@@ -33,6 +33,13 @@
 #include "util.h"
 #include APP_CONFIG
 
+// A board with secure boot or flash encryption is a release board; the
+// INSECURE soft key must never run on one, whatever TINYCRYPT_RELEASE says.
+#if defined(TINYCRYPT_INSECURE_SOFT_KEY) && \
+    (defined(CONFIG_SECURE_BOOT) || defined(CONFIG_SECURE_FLASH_ENC_ENABLED))
+#error "TINYCRYPT_INSECURE_SOFT_KEY must not be built with secure boot or flash encryption enabled"
+#endif
+
 static const char *TAG = "tinycrypt";
 
 #define BUTTON_GPIO GPIO_NUM_0
@@ -101,7 +108,9 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
 {
     uint8_t msg[REPORT_SIZE] = {0};
     memcpy(msg, buffer, bufsize < REPORT_SIZE ? bufsize : REPORT_SIZE);
-    if (xQueueSend(rx_queue, msg, 0) != pdTRUE)
+    // Blocking briefly is safe: TinyUSB only re-arms the OUT endpoint after we
+    // return, so the host is NAKed rather than a report being lost mid-message.
+    if (xQueueSend(rx_queue, msg, pdMS_TO_TICKS(50)) != pdTRUE)
         ESP_LOGW(TAG, "rx queue full, dropping report");
 }
 
@@ -155,36 +164,57 @@ void device_disable_up(bool disable)
     up_disabled = disable;
 }
 
-// Keep servicing CTAPHID while waiting, so the host can CANCEL, and send a
-// KEEPALIVE(UPNEEDED) every 100 ms as the spec asks.
-static int pump(uint32_t ms)
+// Keep servicing CTAPHID while waiting, so the host can CANCEL. Returns false
+// if the request was cancelled.
+// TODO(CRYPT-13): only honour CANCEL from the requesting channel, and answer
+// other channels with CHANNEL_BUSY instead of re-entering the core.
+static bool pump(uint32_t ms)
 {
     uint8_t msg[REPORT_SIZE];
     uint32_t until = millis() + ms;
     while ((int32_t)(until - millis()) > 0)
     {
         if (usbhid_recv(msg, pdMS_TO_TICKS(5)) > 0 && ctaphid_handle_packet(msg) == CTAPHID_CANCEL)
-            return -1;
+            return false;
     }
-    return 0;
+    return true;
 }
 
-// 1 = present, 0 = not present/timed out, 2 = check disabled, -1 = cancelled.
+// Debounced: pressed on two reads 10 ms apart.
+static bool button_down(void)
+{
+    if (!button_pressed())
+        return false;
+    vTaskDelay(pdMS_TO_TICKS(10));
+    return button_pressed();
+}
+
+// Contract with solo1: 1 = present, 0 = not present, 2 = check disabled by
+// the request. NEVER return anything else. solo1's U2F code tests only `== 0`
+// / `!ret`, so a -1 for "cancelled" would count as present and sign without
+// a press. Cancel and timeout both return 0.
+//
+// Presence needs a fresh press: the button must be seen released after the
+// request starts, so a held or stuck button approves nothing.
 int ctap_user_presence_test(uint32_t delay_ms)
 {
     if (up_disabled)
         return 2;
     ESP_LOGI(TAG, "user presence requested: press BOOT");
     uint32_t start = millis();
+    bool seen_released = false;
     while (millis() - start < delay_ms)
     {
         ctaphid_update_status(CTAPHID_STATUS_UPNEEDED);
-        if (pump(100) < 0)
-            return -1;
-        if (button_pressed())
+        if (!pump(100))
         {
-            while (button_pressed() && millis() - start < delay_ms)
-                pump(20);
+            ESP_LOGI(TAG, "presence cancelled by host");
+            return 0;
+        }
+        if (!button_pressed())
+            seen_released = true;
+        else if (seen_released && button_down())
+        {
             ESP_LOGI(TAG, "presence approved");
             return 1;
         }
@@ -218,7 +248,11 @@ static void nvs_write(const char *key, const void *data, size_t len)
 uint32_t ctap_atomic_count(uint32_t amount)
 {
     uint32_t counter = 0;
-    nvs_get_u32(nvs, "counter", &counter);
+    esp_err_t err = nvs_get_u32(nvs, "counter", &counter);
+    // Only a missing counter may start from 0. On any other read error, fail
+    // closed (abort and reboot) rather than let the sign count go backwards.
+    if (err != ESP_ERR_NVS_NOT_FOUND)
+        ESP_ERROR_CHECK(err);
     counter += amount + 1;
     ESP_ERROR_CHECK(nvs_set_u32(nvs, "counter", counter));
     ESP_ERROR_CHECK(nvs_commit(nvs));
@@ -290,10 +324,21 @@ static void ctap_task(void *arg)
     ESP_LOGI(TAG, "CTAP core ready");
 
     uint8_t msg[REPORT_SIZE];
+    UBaseType_t low_water = UINT32_MAX;
     for (;;)
     {
         if (usbhid_recv(msg, pdMS_TO_TICKS(10)) > 0)
+        {
             ctaphid_handle_packet(msg);
+            // The core nests a second CTAP_RESPONSE when packets arrive during a
+            // presence wait; watch how close that gets to the stack limit.
+            UBaseType_t free_now = uxTaskGetStackHighWaterMark(NULL);
+            if (free_now < low_water)
+            {
+                low_water = free_now;
+                ESP_LOGI(TAG, "ctap task stack: %u bytes never used", (unsigned)low_water);
+            }
+        }
         ctaphid_check_timeouts();
     }
 }
@@ -326,6 +371,8 @@ void app_main(void)
 
     set_logging_mask(TAG_ERR | TAG_RED | TAG_GREEN);
     rx_queue = xQueueCreate(16, REPORT_SIZE);
+    if (rx_queue == NULL)
+        abort();
 
     const tinyusb_config_t tusb_cfg = {
         .device_descriptor = &device_descriptor,

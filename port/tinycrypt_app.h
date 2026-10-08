@@ -9,7 +9,9 @@
 
 #define DEBUG_LEVEL 1
 
-// CTAP1/U2F fallback on, Solo's vendor extensions (wallet, bootloader) off.
+// CTAP1/U2F fallback on. Solo's U2F vendor extensions (wallet, bootloader
+// commands) are off. CTAPHID_GETRNG and the extension stubs compiled into the
+// core are still reachable; they need no presence and only expose RNG output.
 #define ENABLE_U2F
 
 // tinycrypt's own AAGUID (random v4: f3751ba0-8b97-47ac-aba7-d1c15c36fecf).

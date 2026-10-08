@@ -22,7 +22,12 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
 - **ESP32-S3 gotchas**: the key is on the *native* USB port, not the UART one. Short FreeRTOS waits
   need `CONFIG_FREERTOS_HZ=1000` (at 100 Hz `pdMS_TO_TICKS(1)` is 0, which once dropped every
   multi-packet CTAPHID reply). After flashing over the native port, press RST; a USB reset leaves
-  it in download mode.
+  it in download mode. `bootloader_random_enable()` feeds the RNG while no radio is on; call
+  `bootloader_random_disable()` before starting BLE/Wi-Fi or using the ADC.
+- **Presence contract** (`ctap_user_presence_test`): return only 1 (present), 0 (absent, cancelled
+  or timed out) or 2 (check disabled by the request). solo1's U2F code tests `== 0` / `!ret`, so
+  any other value (e.g. -1 for cancel) counts as present and signs without a press.
+  `test_u2f_respects_denied_presence` guards this.
 - **CI**: the "Protect main" ruleset requires a check named exactly `CI Status`.
 - **Software key is INSECURE, TEST ONLY**: gated behind `TINYCRYPT_INSECURE_SOFT_KEY`, loud boot
   banner, must not build in release config. Only ever register it against the read-only Identity Center test user.

@@ -3,8 +3,9 @@
 import os
 
 import pytest
-from fido2.client import DefaultClientDataCollector, Fido2Client
+from fido2.client import ClientError, DefaultClientDataCollector, Fido2Client
 from fido2.ctap import CtapError
+from fido2.ctap1 import APDU, ApduError, Ctap1
 from fido2.ctap2 import Ctap2
 from fido2.server import Fido2Server
 from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialUserEntity
@@ -83,6 +84,52 @@ def test_credential_is_bound_to_its_rp(sim):
     _, auth_data = register(sim.device())
     other = Fido2Server(PublicKeyCredentialRpEntity(name="other", id="other.example"))
     options, _ = other.authenticate_begin([auth_data.credential_data], user_verification="discouraged")
-    with pytest.raises(Exception) as err:
+    with pytest.raises(ClientError) as err:
         client_for(sim.device(), origin="https://other.example").get_assertion(options.public_key)
-    assert "NO_CREDENTIALS" in repr(err.value) or "DEVICE_INELIGIBLE" in repr(err.value)
+    assert err.value.code == ClientError.ERR.DEVICE_INELIGIBLE
+
+
+def test_resident_key_found_without_allow_list_and_survives_restart(sim):
+    server = Fido2Server(RP)
+    options, state = server.register_begin(
+        USER, resident_key_requirement="required", user_verification="discouraged"
+    )
+    cred = server.register_complete(
+        state, client_for(sim.device()).make_credential(options.public_key)
+    ).credential_data
+
+    for _ in range(2):
+        options, state = server.authenticate_begin(user_verification="discouraged")
+        selection = client_for(sim.device()).get_assertion(options.public_key)
+        response = selection.get_response(0)
+        assert response.response.user_handle == USER.id
+        server.authenticate_complete(state, [cred], response)
+        sim.restart()
+
+
+def test_u2f_register_and_authenticate(sim):
+    ctap1 = Ctap1(sim.device())
+    app_param = os.urandom(32)
+    reg = ctap1.register(os.urandom(32), app_param)
+    challenge = os.urandom(32)
+    sig = ctap1.authenticate(challenge, app_param, reg.key_handle)
+    assert sig.user_presence & 1
+    sig.verify(app_param, challenge, reg.public_key)
+
+
+@pytest.mark.parametrize("op", ["register", "authenticate"])
+def test_u2f_respects_denied_presence(make_sim, op):
+    # Regression guard for the presence contract: U2F only treats 0 as "absent".
+    approving = make_sim(presence="auto")
+    app_param = os.urandom(32)
+    reg = Ctap1(approving.device()).register(os.urandom(32), app_param)
+    approving.stop()
+
+    denying = make_sim(presence="deny")
+    ctap1 = Ctap1(denying.device())
+    with pytest.raises(ApduError) as err:
+        if op == "register":
+            ctap1.register(os.urandom(32), app_param)
+        else:
+            ctap1.authenticate(os.urandom(32), app_param, reg.key_handle)
+    assert err.value.code == APDU.USE_NOT_SATISFIED

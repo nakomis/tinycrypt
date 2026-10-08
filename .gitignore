@@ -92,3 +92,7 @@ esp32s3/managed_components/
 tests/.venv/
 __pycache__/
 .pytest_cache/
+
+# Mac sim state (master secret, resident keys, counter)
+sim-state/
+*.bin

@@ -17,6 +17,7 @@
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -119,7 +120,9 @@ void device_disable_up(bool disable)
     up_disabled = disable;
 }
 
-// 1 = present, 0 = not present, 2 = presence check disabled by the request.
+// Contract with solo1: 1 = present, 0 = not present, 2 = check disabled by
+// the request. NEVER return anything else: solo1's U2F code tests only
+// `== 0` / `!ret`, so any other value counts as present.
 int ctap_user_presence_test(uint32_t delay_ms)
 {
     if (up_disabled)
@@ -147,6 +150,9 @@ int ctap_user_presence_test(uint32_t delay_ms)
                 char line[64];
                 if (fgets(line, sizeof(line), stdin) != NULL)
                     return 1;
+                // stdin closed: nobody can ever approve, so don't spin.
+                fprintf(stderr, ">>> stdin closed, presence denied\n");
+                return 0;
             }
         }
         fprintf(stderr, ">>> Timed out\n");
@@ -291,7 +297,8 @@ static void usage(const char *argv0)
 int main(int argc, char *argv[])
 {
     uint16_t port = 8111;
-    const char *state_dir = ".";
+    // Holds the master secret: keep it out of wherever the sim is run from.
+    const char *state_dir = "sim-state";
     static const struct option opts[] = {
         {"port", required_argument, NULL, 'p'},
         {"state-dir", required_argument, NULL, 's'},
@@ -325,6 +332,9 @@ int main(int argc, char *argv[])
     }
 
     fputs(TINYCRYPT_SOFT_KEY_BANNER, stderr);
+
+    if (mkdir(state_dir, 0700) != 0 && errno != EEXIST)
+        die(state_dir);
 
     snprintf(state_path, sizeof(state_path), "%s/authenticator_state.bin", state_dir);
     snprintf(rk_path, sizeof(rk_path), "%s/resident_keys.bin", state_dir);
