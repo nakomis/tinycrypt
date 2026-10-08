@@ -1,7 +1,7 @@
 """Register and authenticate against a real tinycrypt key over USB HID.
 
 Needs a human: press the key's presence button (BOOT) when prompted.
-    tests/.venv/bin/python tests/hw_smoke.py
+    cd embedded && tests/.venv/bin/python tests/hw_smoke.py
 """
 
 import sys

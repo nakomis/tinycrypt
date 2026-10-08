@@ -16,7 +16,10 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
 - **Presence is button OR watch** (CRYPT-13): a physical button wired to the device and the watch
   approval are both armed, and the first to respond wins. The button must always work on its own;
   the watch is a convenience, not a stronger factor. Tests use auto-approve or deny.
-- **CTAP2 core is SoloKeys solo1** (Apache-2.0 OR MIT), a submodule in `third_party/solo1`; never
+- **Layout** follows Martin's standard: code in top-level component folders, only docs and config at
+  the root. `embedded/` holds all firmware (CMake sim build, `port/`, `sim/`, `esp32s3/`, `tests/`,
+  `third_party/`); the IoT/SNS CDK will go in `infra/`, the watch app in its own folder.
+- **CTAP2 core is SoloKeys solo1** (Apache-2.0 OR MIT), a submodule in `embedded/third_party/solo1`; never
   copy its code into our CC0 tree. Ports override its `__attribute__((weak))` device hooks; the
   ESP32 `main` component is `WHOLE_ARCHIVE` so the strong ones always win.
 - **ESP32-S3 gotchas**: the key is on the *native* USB port, not the UART one. Short FreeRTOS waits

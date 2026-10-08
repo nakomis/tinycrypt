@@ -44,15 +44,17 @@ notifier back ends, so most of it also runs as a simulator on macOS.
 
 ## Building and testing
 
-The CTAP2 core is [SoloKeys solo1](https://github.com/solokeys/solo1) (Apache-2.0 OR MIT), pinned as
-a submodule in `third_party/solo1` under its own licence. Fetch it and the libraries it builds:
+All the firmware lives in `embedded/`, and the commands below run from there. The CTAP2 core is
+[SoloKeys solo1](https://github.com/solokeys/solo1) (Apache-2.0 OR MIT), pinned as a submodule in
+`embedded/third_party/solo1` under its own licence. Fetch it and the libraries it builds:
 
 ```bash
+cd embedded
 git submodule update --init third_party/solo1
 git -C third_party/solo1 submodule update --init crypto/cifra crypto/micro-ecc crypto/tiny-AES-c tinycbor
 ```
 
-| Path | What it is |
+| Path (under `embedded/`) | What it is |
 |---|---|
 | `cmake/solo_sources.cmake` | The core's source list, shared by both builds |
 | `port/` | App config and the keystore guard (`TINYCRYPT_INSECURE_SOFT_KEY`, refused in release builds) |

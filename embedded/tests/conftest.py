@@ -62,7 +62,7 @@ class Sim:
 @pytest.fixture
 def make_sim(tmp_path):
     if not SIM.exists():
-        pytest.fail(f"{SIM} not built: cmake -S . -B build -DTINYCRYPT_INSECURE_SOFT_KEY=ON && cmake --build build")
+        pytest.fail(f"{SIM} not built (from embedded/): cmake -S . -B build -DTINYCRYPT_INSECURE_SOFT_KEY=ON && cmake --build build")
     sims = []
 
     def factory(presence: str = "auto") -> Sim:

@@ -80,16 +80,16 @@ PLAN.md
 .vscode/
 
 # Native (Mac sim) build
-/build/
+embedded/build/
 
 # ESP-IDF
-esp32s3/build/
-esp32s3/sdkconfig
-esp32s3/sdkconfig.old
-esp32s3/managed_components/
+embedded/esp32s3/build/
+embedded/esp32s3/sdkconfig
+embedded/esp32s3/sdkconfig.old
+embedded/esp32s3/managed_components/
 
 # Python
-tests/.venv/
+embedded/tests/.venv/
 __pycache__/
 .pytest_cache/
 
