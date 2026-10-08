@@ -78,3 +78,17 @@ PLAN.md
 
 # VS Code
 .vscode/
+
+# Native (Mac sim) build
+/build/
+
+# ESP-IDF
+esp32s3/build/
+esp32s3/sdkconfig
+esp32s3/sdkconfig.old
+esp32s3/managed_components/
+
+# Python
+tests/.venv/
+__pycache__/
+.pytest_cache/
