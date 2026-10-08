@@ -7,7 +7,7 @@ Needs a human: press the key's presence button (BOOT) when prompted.
 import sys
 import time
 
-from fido2.client import DefaultClientDataCollector, Fido2Client, UserInteraction
+from fido2.client import ClientError, DefaultClientDataCollector, Fido2Client, UserInteraction
 from fido2.hid import CtapHidDevice
 from fido2.server import Fido2Server
 from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialUserEntity
@@ -21,11 +21,25 @@ class Prompt(UserInteraction):
         print(">>> Press BOOT on the key now", flush=True)
 
 
-def find_key():
-    for dev in CtapHidDevice.list_devices():
-        if dev.descriptor.product_name and "tinycrypt" in dev.descriptor.product_name:
-            return dev
+def find_key(wait_s=120):
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        for dev in CtapHidDevice.list_devices():
+            if dev.descriptor.product_name and "tinycrypt" in dev.descriptor.product_name:
+                return dev
+        time.sleep(1)
     sys.exit("no tinycrypt key found")
+
+
+def with_retries(step, attempts=6):
+    """Each presence wait times out after ~30 s; give the human a few goes."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return step()
+        except ClientError as err:
+            if err.code != ClientError.ERR.TIMEOUT or attempt == attempts:
+                raise
+            print(f"... no press within the timeout, retrying ({attempt}/{attempts})", flush=True)
 
 
 def main():
@@ -35,13 +49,15 @@ def main():
 
     options, state = server.register_begin(USER, user_verification="discouraged")
     t = time.time()
-    auth_data = server.register_complete(state, client.make_credential(options.public_key))
+    auth_data = server.register_complete(
+        state, with_retries(lambda: client.make_credential(options.public_key))
+    )
     cred = auth_data.credential_data
     print(f"registered in {time.time() - t:.1f}s, credential {cred.credential_id.hex()[:16]}...", flush=True)
 
     options, state = server.authenticate_begin([cred], user_verification="discouraged")
     t = time.time()
-    response = client.get_assertion(options.public_key).get_response(0)
+    response = with_retries(lambda: client.get_assertion(options.public_key)).get_response(0)
     server.authenticate_complete(state, [cred], response)
     print(f"authenticated in {time.time() - t:.1f}s, sign count {response.response.authenticator_data.counter}")
     print("PASS")

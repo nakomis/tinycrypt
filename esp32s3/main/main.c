@@ -13,7 +13,10 @@
 
 #include "bootloader_random.h"
 #include "class/hid/hid_device.h"
+#include <inttypes.h>
+
 #include "driver/gpio.h"
+#include "esp_core_dump.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_system.h"
@@ -82,11 +85,16 @@ static const tusb_desc_device_t device_descriptor = {
     .bNumConfigurations = 0x01,
 };
 
+// The serial number carries the last reset reason (esp_reset_reason_t), e.g.
+// "0001-rr4" after a panic, so crashes are visible from the host (ioreg/lsusb)
+// without a UART cable.
+static char serial_string[16] = "0001";
+
 static const char *string_descriptor[] = {
     (const char[]){0x09, 0x04}, // English
     "nakomis",
     "tinycrypt INSECURE TEST KEY",
-    "0001",
+    serial_string,
     "FIDO",
 };
 
@@ -324,6 +332,23 @@ void ctap_overwrite_rk(int index, CTAP_residentKey *rk)
 
 // ---- main -------------------------------------------------------------------
 
+// Print the saved core dump's summary (task, PC, backtrace) at boot, so a crash
+// can be read over the UART console without download mode. Decode with
+// xtensa-esp32s3-elf-addr2line -pfiaC -e build/tinycrypt.elf <addresses>.
+static void report_last_crash(void)
+{
+    if (esp_core_dump_image_check() != ESP_OK)
+        return;
+    esp_core_dump_summary_t summary;
+    if (esp_core_dump_get_summary(&summary) != ESP_OK)
+        return;
+    printf("LAST CRASH: task '%s' pc 0x%08" PRIx32 " cause %" PRIu32 " vaddr 0x%08" PRIx32 "\nBacktrace:",
+           summary.exc_task, summary.exc_pc, summary.ex_info.exc_cause, summary.ex_info.exc_vaddr);
+    for (int i = 0; i < summary.exc_bt_info.depth; i++)
+        printf(" 0x%08" PRIx32, summary.exc_bt_info.bt[i]);
+    printf("%s\n", summary.exc_bt_info.corrupted ? " (corrupted)" : "");
+}
+
 static void ctap_task(void *arg)
 {
     ctaphid_init();
@@ -353,6 +378,8 @@ static void ctap_task(void *arg)
 void app_main(void)
 {
     printf("%s", TINYCRYPT_SOFT_KEY_BANNER);
+    snprintf(serial_string, sizeof(serial_string), "0001-rr%d", (int)esp_reset_reason());
+    report_last_crash();
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
