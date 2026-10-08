@@ -4,11 +4,21 @@
 //   tinycrypt-sigcheck <pub hex, 64 bytes> <message hex> <sig hex, 64 bytes>
 //
 // Exits 0 if the signature verifies, 1 if it doesn't, 2 on bad arguments.
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "presence_sig.h"
+
+// Strict: sscanf("%2x") would also accept spaces and signs.
+static int nibble(char c)
+{
+    if (!isxdigit((unsigned char)c)) {
+        return -1;
+    }
+    return isdigit((unsigned char)c) ? c - '0' : tolower((unsigned char)c) - 'a' + 10;
+}
 
 // Decodes exactly `want` bytes of hex (or any length if want < 0). Returns the
 // length, or -1 on malformed input.
@@ -19,11 +29,11 @@ static long unhex(const char *s, uint8_t *out, size_t cap, long want)
         return -1;
     }
     for (size_t i = 0; i < n / 2; i++) {
-        unsigned int b;
-        if (sscanf(s + 2 * i, "%2x", &b) != 1) {
+        int hi = nibble(s[2 * i]), lo = nibble(s[2 * i + 1]);
+        if (hi < 0 || lo < 0) {
             return -1;
         }
-        out[i] = (uint8_t)b;
+        out[i] = (uint8_t)(hi << 4 | lo);
     }
     return (long)(n / 2);
 }

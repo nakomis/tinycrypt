@@ -109,9 +109,19 @@ def test_rejects_other_public_key():
     assert not sigcheck(other, bytes.fromhex(case["message"]), bytes.fromhex(case["sig"]))
 
 
-def test_rejects_public_key_not_on_curve():
+@pytest.mark.parametrize("pub", [
+    bytes(64),                               # the all-zero "point at infinity"
+    bytes(32) + PUB[32:],                    # x = 0
+    None,                                    # flipped bit: off the curve
+], ids=["zero", "x-zero", "flipped"])
+def test_rejects_public_key_not_on_curve(pub):
+    """Rejected either way. Note uECC_verify alone also rejects these (checked by
+    removing the uECC_valid_public_key guard), so this pins behaviour rather than
+    proving the guard; the guard is defence in depth, since the key is the watch's
+    registered key, not attacker-chosen."""
+    pub = flip(PUB, 0) if pub is None else pub
     case = CASES[0]
-    assert not sigcheck(flip(PUB, 0), bytes.fromhex(case["message"]), bytes.fromhex(case["sig"]))
+    assert not sigcheck(pub, bytes.fromhex(case["message"]), bytes.fromhex(case["sig"]))
 
 
 def test_high_s_is_accepted():
@@ -132,6 +142,8 @@ def test_high_s_is_accepted():
     ["00" * 63, "00", "00" * 64],    # short public key
     ["zz" * 64, "00", "00" * 64],    # not hex
     ["00" * 64, "0", "00" * 64],     # odd-length message
+    ["00" * 64, " f", "00" * 64],    # whitespace, which sscanf would have accepted
+    ["00" * 64, "+f", "00" * 64],    # sign, likewise
 ])
 def test_sigcheck_rejects_bad_arguments(args):
     if not SIGCHECK.exists():

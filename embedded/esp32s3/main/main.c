@@ -354,6 +354,10 @@ static void report_last_crash(void)
 
 static void ctap_task(void *arg)
 {
+#ifdef TINYCRYPT_SE_SELFTEST
+    // Here rather than app_main: two ECDSA verifies need more than the main task's 3.5 KB stack.
+    se_selftest_run();
+#endif
     ctaphid_init();
     ctap_init();
     ESP_LOGI(TAG, "CTAP core ready");
@@ -383,9 +387,6 @@ void app_main(void)
     printf("%s", TINYCRYPT_SOFT_KEY_BANNER);
     snprintf(serial_string, sizeof(serial_string), "0001-rr%d", (int)esp_reset_reason());
     report_last_crash();
-#ifdef TINYCRYPT_SE_SELFTEST
-    se_selftest_run();
-#endif
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
