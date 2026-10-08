@@ -44,6 +44,25 @@ jobs:
         working-directory: watch/tools/se-vector
         run: swift build
 
+      - name: Build the BLE key stand-in
+        working-directory: watch/tools/key-standin
+        run: swift build
+
+  watch-app:
+    name: Watch app
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      # Unsigned compile check; installing on a watch needs Martin's signing identity.
+      - name: Build for watchOS
+        working-directory: watch/TinycryptWatch
+        run: |
+          xcodegen generate
+          xcodebuild -project TinycryptWatch.xcodeproj -scheme TinycryptWatch \
+            -destination 'generic/platform=watchOS' CODE_SIGNING_ALLOWED=NO build
+
   esp32s3:
     name: ESP32-S3 firmware
     runs-on: ubuntu-latest
@@ -93,12 +112,13 @@ jobs:
   ci-status:
     name: CI Status
     if: always()
-    needs: [mac-sim, esp32s3, lint]
+    needs: [mac-sim, esp32s3, watch-app, lint]
     runs-on: ubuntu-latest
     steps:
       - name: All jobs passed
         run: |
-          echo 'mac-sim=${{ needs.mac-sim.result }} esp32s3=${{ needs.esp32s3.result }} lint=${{ needs.lint.result }}'
+          echo 'mac-sim=${{ needs.mac-sim.result }} esp32s3=${{ needs.esp32s3.result }} watch-app=${{ needs.watch-app.result }} lint=${{ needs.lint.result }}'
           test '${{ needs.mac-sim.result }}' = success
           test '${{ needs.esp32s3.result }}' = success
+          test '${{ needs.watch-app.result }}' = success
           test '${{ needs.lint.result }}' = success

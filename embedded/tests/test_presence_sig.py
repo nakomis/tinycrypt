@@ -1,9 +1,11 @@
 """Secure Enclave signature interop (CRYPT-10).
 
-The vectors in vectors/se_p256.json were signed by a real Secure Enclave key
-through CryptoKit `signature(for: Data)`, exactly as the watch will sign
-(watch/tools/se-vector). They pin the convention: the signed value is
-SHA-256(message), the public key is X||Y and the signature is r||s.
+Every vectors/se_p256*.json file was signed by a real Secure Enclave key
+through CryptoKit `signature(for: Data)`: se_p256.json by the Mac's
+(watch/tools/se-vector), se_p256_watch.json by an Apple Watch's over BLE
+presence challenges (CRYPT-11, watch/tools/key-standin). They pin the
+convention: the signed value is SHA-256(message), the public key is X||Y and
+the signature is r||s.
 """
 import hashlib
 import json
@@ -19,9 +21,10 @@ from cryptography.hazmat.primitives.asymmetric.utils import Prehashed, encode_ds
 
 SIGCHECK = Path(os.environ.get("TINYCRYPT_SIGCHECK",
                                Path(__file__).parent.parent / "build" / "tinycrypt-sigcheck"))
-VECTORS = json.loads((Path(__file__).parent / "vectors" / "se_p256.json").read_text())
-PUB = bytes.fromhex(VECTORS["pub"])
-CASES = VECTORS["cases"]
+VECTOR_FILES = sorted((Path(__file__).parent / "vectors").glob("se_p256*.json"))
+VECTORS = {f.stem: json.loads(f.read_text()) for f in VECTOR_FILES}
+# (file stem, public key, case) for every case in every file.
+CASES = [(name, bytes.fromhex(v["pub"]), case) for name, v in VECTORS.items() for case in v["cases"]]
 # Order of the P-256 group.
 N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 
@@ -41,99 +44,128 @@ def flip(data: bytes, bit: int) -> bytes:
     return bytes(out)
 
 
-def ids(case):
-    return case["name"]
+def ids(item):
+    return f"{item[0]}:{item[2]['name']}" if isinstance(item, tuple) else item
 
 
-def test_vectors_come_from_a_secure_enclave():
-    assert VECTORS["source"] == "secure-enclave"
-    assert len(PUB) == 64
-    assert CASES
+@pytest.fixture(params=list(VECTORS), ids=list(VECTORS))
+def vector(request):
+    """One vector file: (public key, its cases)."""
+    v = VECTORS[request.param]
+    return bytes.fromhex(v["pub"]), v["cases"]
 
 
-@pytest.mark.parametrize("case", CASES, ids=ids)
-def test_vector_digest_is_sha256_of_message(case):
+def test_mac_vector_present():
+    assert "se_p256" in VECTORS
+
+
+def test_vectors_come_from_a_secure_enclave(vector):
+    pub, cases = vector
+    assert len(pub) == 64
+    assert cases
+
+
+@pytest.mark.parametrize("item", CASES, ids=ids)
+def test_vector_digest_is_sha256_of_message(item):
+    _, _, case = item
     message = bytes.fromhex(case["message"])
     assert hashlib.sha256(message).hexdigest() == case["sha256"]
 
 
-@pytest.mark.parametrize("case", CASES, ids=ids)
-def test_key_side_verifier_accepts_secure_enclave_signature(case):
-    assert sigcheck(PUB, bytes.fromhex(case["message"]), bytes.fromhex(case["sig"]))
+@pytest.mark.parametrize("item", CASES, ids=ids)
+def test_key_side_verifier_accepts_secure_enclave_signature(item):
+    _, pub, case = item
+    assert sigcheck(pub, bytes.fromhex(case["message"]), bytes.fromhex(case["sig"]))
 
 
-@pytest.mark.parametrize("case", CASES, ids=ids)
-def test_independent_verifier_agrees(case):
+@pytest.mark.parametrize("item", CASES, ids=ids)
+def test_independent_verifier_agrees(item):
     """python `cryptography` (OpenSSL) also verifies it as ECDSA over SHA-256(message)."""
-    key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), b"\x04" + PUB)
+    _, pub, case = item
+    key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), b"\x04" + pub)
     sig = bytes.fromhex(case["sig"])
     der = encode_dss_signature(int.from_bytes(sig[:32], "big"), int.from_bytes(sig[32:], "big"))
     key.verify(der, bytes.fromhex(case["message"]), ec.ECDSA(hashes.SHA256()))
     key.verify(der, bytes.fromhex(case["sha256"]), ec.ECDSA(Prehashed(hashes.SHA256())))
 
 
-@pytest.mark.parametrize("case", CASES, ids=ids)
-def test_nonce_is_not_the_digest(case):
-    """The original bug: treating the 32-byte nonce as if it were the digest."""
-    key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), b"\x04" + PUB)
+@pytest.mark.parametrize("item", CASES, ids=ids)
+def test_nonce_is_not_the_digest(item):
+    """The original bug: treating the 32-byte nonce as if it were the digest.
+    The nonce is the message's last 32 bytes (all of it for the Mac vectors)."""
+    _, pub, case = item
+    key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), b"\x04" + pub)
     sig = bytes.fromhex(case["sig"])
     der = encode_dss_signature(int.from_bytes(sig[:32], "big"), int.from_bytes(sig[32:], "big"))
     with pytest.raises(InvalidSignature):
-        key.verify(der, bytes.fromhex(case["message"]), ec.ECDSA(Prehashed(hashes.SHA256())))
+        key.verify(der, bytes.fromhex(case["message"])[-32:], ec.ECDSA(Prehashed(hashes.SHA256())))
     # Feeding our verifier the digest as the message hashes it twice: also rejected.
-    assert not sigcheck(PUB, bytes.fromhex(case["sha256"]), sig)
+    assert not sigcheck(pub, bytes.fromhex(case["sha256"]), sig)
 
 
 @pytest.mark.parametrize("bit", [0, 255, 256, 511])
-def test_rejects_tampered_signature(bit):
-    case = CASES[0]
-    assert not sigcheck(PUB, bytes.fromhex(case["message"]), flip(bytes.fromhex(case["sig"]), bit))
+def test_rejects_tampered_signature(vector, bit):
+    pub, cases = vector
+    case = cases[0]
+    assert not sigcheck(pub, bytes.fromhex(case["message"]), flip(bytes.fromhex(case["sig"]), bit))
 
 
 @pytest.mark.parametrize("bit", [0, 255])
-def test_rejects_tampered_message(bit):
-    case = CASES[0]
-    assert not sigcheck(PUB, flip(bytes.fromhex(case["message"]), bit), bytes.fromhex(case["sig"]))
+def test_rejects_tampered_message(vector, bit):
+    pub, cases = vector
+    case = cases[0]
+    assert not sigcheck(pub, flip(bytes.fromhex(case["message"]), bit), bytes.fromhex(case["sig"]))
 
 
-def test_rejects_other_cases_signature():
+def test_rejects_other_cases_signature(vector):
     """A signature is bound to its own message."""
-    assert len(CASES) >= 2
-    assert not sigcheck(PUB, bytes.fromhex(CASES[0]["message"]), bytes.fromhex(CASES[1]["sig"]))
+    pub, cases = vector
+    assert len(cases) >= 2
+    assert not sigcheck(pub, bytes.fromhex(cases[0]["message"]), bytes.fromhex(cases[1]["sig"]))
 
 
-def test_rejects_other_public_key():
+def test_rejects_other_public_key(vector):
+    _, cases = vector
     other = ec.generate_private_key(ec.SECP256R1()).public_key().public_bytes(
         serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)[1:]
-    case = CASES[0]
+    case = cases[0]
     assert not sigcheck(other, bytes.fromhex(case["message"]), bytes.fromhex(case["sig"]))
 
 
-@pytest.mark.parametrize("pub", [
-    bytes(64),                               # the all-zero "point at infinity"
-    bytes(32) + PUB[32:],                    # x = 0
-    None,                                    # flipped bit: off the curve
-], ids=["zero", "x-zero", "flipped"])
-def test_rejects_public_key_not_on_curve(pub):
+def test_rejects_signature_from_other_secure_enclave_key():
+    """Each enrolled key verifies only its own signatures (needs both vector files)."""
+    keys = {name: (bytes.fromhex(v["pub"]), v["cases"][0]) for name, v in VECTORS.items()}
+    if len(keys) < 2:
+        pytest.skip("only one vector file")
+    (pub_a, _), (_, case_b) = list(keys.values())[:2]
+    assert not sigcheck(pub_a, bytes.fromhex(case_b["message"]), bytes.fromhex(case_b["sig"]))
+
+
+@pytest.mark.parametrize("bad", ["zero", "x-zero", "flipped"])
+def test_rejects_public_key_not_on_curve(vector, bad):
     """Rejected either way. Note uECC_verify alone also rejects these (checked by
     removing the uECC_valid_public_key guard), so this pins behaviour rather than
     proving the guard; the guard is defence in depth, since the key is the watch's
     registered key, not attacker-chosen."""
-    pub = flip(PUB, 0) if pub is None else pub
-    case = CASES[0]
+    good, cases = vector
+    pub = {"zero": bytes(64),                    # the all-zero "point at infinity"
+           "x-zero": bytes(32) + good[32:],      # x = 0
+           "flipped": flip(good, 0)}[bad]        # flipped bit: off the curve
+    case = cases[0]
     assert not sigcheck(pub, bytes.fromhex(case["message"]), bytes.fromhex(case["sig"]))
 
 
-def test_high_s_is_accepted():
+def test_high_s_is_accepted(vector):
     """ECDSA malleability: (r, n - s) is also valid. Neither micro-ecc nor
     CryptoKit enforces low-S. Harmless while every challenge has a fresh nonce,
     but pinned here so nobody assumes signatures are unique."""
-    case = CASES[0]
+    pub, cases = vector
+    case = cases[0]
     sig = bytes.fromhex(case["sig"])
     s = int.from_bytes(sig[32:], "big")
     twin = sig[:32] + (N - s).to_bytes(32, "big")
     assert twin != sig
-    assert sigcheck(PUB, bytes.fromhex(case["message"]), twin)
+    assert sigcheck(pub, bytes.fromhex(case["message"]), twin)
 
 
 @pytest.mark.parametrize("args", [
