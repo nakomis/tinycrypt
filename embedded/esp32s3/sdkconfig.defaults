@@ -1,0 +1,16 @@
+CONFIG_IDF_TARGET="esp32s3"
+
+# One HID interface (FIDO), no CDC: the native USB port is the security key.
+CONFIG_TINYUSB_HID_COUNT=1
+CONFIG_TINYUSB_CDC_ENABLED=n
+CONFIG_TINYUSB_MSC_ENABLED=n
+
+# Crashes are saved to flash (read with: idf.py coredump-info), since the
+# native USB port is the key and there may be no UART console attached.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+
+# 1 ms ticks: the port's short waits (pdMS_TO_TICKS(1..5)) are 0 at 100 Hz.
+CONFIG_FREERTOS_HZ=1000

@@ -24,8 +24,10 @@ The first target is signing into AWS IAM Identity Center with the "Security key"
 - Microchip ATECC608 — ECC P-256 secure element (I²C) for key storage, added after the software prototype
 - Apple Watch — user-presence approval
 
-**Status:** feasibility spikes. The earlier ATtiny85 / U2F experiments live on the
-[`spike`](https://github.com/nakomis/tinycrypt/tree/spike) branch.
+**Status:** feasibility spikes. Spike A passed: an ESP32-S3 running the
+[SoloKeys solo1](https://github.com/solokeys/solo1) CTAP2 core, with an insecure software key and a
+BOOT-button presence check, registered and signed into IAM Identity Center from Chrome. The earlier
+ATtiny85 / U2F experiments live on the [`spike`](https://github.com/nakomis/tinycrypt/tree/spike) branch.
 
 ## How it fits together
 
@@ -39,6 +41,47 @@ notifier back ends, so most of it also runs as a simulator on macOS.
 
 > **Testing builds** can use a software key instead of the ATECC608. That build is deliberately
 > insecure, is for testing only, and must only ever be registered against a read-only test user.
+
+## Building and testing
+
+All the firmware lives in `embedded/`, and the commands below run from there. The CTAP2 core is
+[SoloKeys solo1](https://github.com/solokeys/solo1) (Apache-2.0 OR MIT), pinned as a submodule in
+`embedded/third_party/solo1` under its own licence. Fetch it and the libraries it builds:
+
+```bash
+cd embedded
+git submodule update --init third_party/solo1
+git -C third_party/solo1 submodule update --init crypto/cifra crypto/micro-ecc crypto/tiny-AES-c tinycbor
+```
+
+| Path (under `embedded/`) | What it is |
+|---|---|
+| `cmake/solo_sources.cmake` | The core's source list, shared by both builds |
+| `port/` | App config and the keystore guard (`TINYCRYPT_INSECURE_SOFT_KEY`, refused in release builds) |
+| `sim/` | Mac simulator: CTAPHID over UDP, state in a directory |
+| `esp32s3/` | ESP-IDF firmware: TinyUSB FIDO HID, NVS soft key, BOOT-button presence |
+| `tests/` | python-fido2 tests against the sim, plus `hw_smoke.py` for a real key |
+
+**Mac sim** (needs `brew install libsodium`):
+
+```bash
+cmake -S . -B build -DTINYCRYPT_INSECURE_SOFT_KEY=ON && cmake --build build
+python3 -m venv tests/.venv && tests/.venv/bin/pip install -r tests/requirements.txt
+tests/.venv/bin/python -m pytest tests
+build/tinycrypt-sim --presence prompt     # run it by hand; press Enter to approve
+```
+
+**ESP32-S3** (ESP-IDF 5.5 in `~/esp/v5.5/esp-idf`):
+
+```bash
+esp32s3/build.sh                                    # build
+esp32s3/build.sh -p /dev/cu.usbmodemXXXX flash      # flash over the UART port
+esp32s3/flash-manual.sh /dev/cu.usbmodemXXXX        # if auto-reset fails: hold BOOT, tap RST, release BOOT first
+tests/.venv/bin/python tests/hw_smoke.py            # register + authenticate; press BOOT when asked
+```
+
+The key enumerates on the S3's **native** USB port (not the UART one) as
+"tinycrypt INSECURE TEST KEY", USB ID 303a:4004.
 
 ## Architecture Diagram
 

@@ -1,0 +1,3 @@
+dependencies:
+  # solo1's crypto.c uses libsodium for Ed25519 on non-STM32 targets.
+  espressif/libsodium: "^1.0.20"

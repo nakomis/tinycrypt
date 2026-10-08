@@ -1,0 +1,3 @@
+[submodule "third_party/solo1"]
+	path = embedded/third_party/solo1
+	url = https://github.com/solokeys/solo1.git

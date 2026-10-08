@@ -78,3 +78,21 @@ PLAN.md
 
 # VS Code
 .vscode/
+
+# Native (Mac sim) build
+embedded/build/
+
+# ESP-IDF
+embedded/esp32s3/build/
+embedded/esp32s3/sdkconfig
+embedded/esp32s3/sdkconfig.old
+embedded/esp32s3/managed_components/
+
+# Python
+embedded/tests/.venv/
+__pycache__/
+.pytest_cache/
+
+# Mac sim state (master secret, resident keys, counter)
+sim-state/
+*.bin
