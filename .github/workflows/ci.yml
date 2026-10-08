@@ -73,8 +73,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: No references to the old repo name
         run: |
-          if grep -rn "tiny-crypt" --exclude-dir=.git --exclude-dir=third_party .; then
-            echo "found 'tiny-crypt': the repo is now 'tinycrypt'"; exit 1
+          # [-] so this file doesn't match its own pattern.
+          if grep -rn "tiny[-]crypt" --exclude-dir=.git --exclude-dir=third_party .; then
+            echo "found the old hyphenated name: the repo is now 'tinycrypt'"; exit 1
           fi
 
   # The "Protect main" ruleset requires a check with exactly this name.
