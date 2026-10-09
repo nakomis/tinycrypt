@@ -5,8 +5,17 @@ import SwiftUI
 import UserNotifications
 import WatchKit
 
-/// When this process started, to tell a cold launch (app was not running) from a warm one.
-let processStart = ContinuousClock.now
+/// Milliseconds since the kernel started this process. Near-zero-plus-launch-time at the tap means
+/// a cold launch. (A lazy Swift global would be initialised inside the handler, so always read ~0.)
+func processAgeMs() -> Int {
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.size
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+    guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return -1 }
+    let start = info.kp_proc.p_un.__p_starttime
+    let started = Double(start.tv_sec) + Double(start.tv_usec) / 1_000_000
+    return Int((Date().timeIntervalSince1970 - started) * 1000)
+}
 
 @main
 struct TinycryptWatchApp: App {
@@ -34,15 +43,14 @@ final class AppDelegate: NSObject, WKApplicationDelegate, UNUserNotificationCent
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let tap = ContinuousClock.now
         let state = WKApplication.shared().applicationState
-        let processAge = tap - processStart
+        let processAge = processAgeMs()
         let device = WKInterfaceDevice.current()
         let context = [
             "os": "\(device.systemName) \(device.systemVersion)",
             "model": modelIdentifier(),
             "action": response.actionIdentifier,
             "appState": ["active", "inactive", "background"][min(state.rawValue, 2)],
-            "processAgeMs": String(Int(processAge.components.seconds * 1000
-                                        + processAge.components.attoseconds / 1_000_000_000_000_000)),
+            "processAgeMs": String(processAge),
         ]
         guard response.actionIdentifier == Presence.approve else {
             AppModel.shared.record("\(response.actionIdentifier) (no BLE) \(context)")

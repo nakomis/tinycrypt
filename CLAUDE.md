@@ -49,9 +49,22 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   peripheral and the watch the central**. Proximity is the point of BLE: the cloud only sends the
   notification, and the approval itself must come over the air from a watch in range. Reconnect by
   **retrieving the peripheral by identifier** (saved at enrolment): it works from the foreground, the
-  background and a cold launch (~1.4 s from tap to verified). **Scanning doesn't work from the
-  background** on watchOS 27 (never discovered in 20 s; ~150 ms in the foreground), so scan only
-  while the app is open (enrolment, or as a fallback). Key-side timeout must allow ~2 s plus slack.
+  background and a cold launch, ~1.4 s median (n=4, worst 1.7 s) from the Approve action handler
+  starting to the key verifying. That excludes notification delivery and app launch time, so it is
+  a lower bound on what the user feels. **Scanning doesn't work from the background** on watchOS 27
+  (never discovered in 20 s, n=2; ~150 ms in the foreground), so scan only while the app is open
+  (enrolment, or as a fallback). Key-side timeout must allow ~2 s plus launch time plus slack.
+- **Open security questions for the real design** (the spike deliberately ignores them):
+  - **Relay**: the watch trusts any peripheral with the service UUID (scan) or the saved identifier
+    (retrieve). A relay near the watch can forward the real key's challenge, so proximity to the relay
+    is not proximity to the key. Bind the signed message to the key's identity and the pending CTAP
+    request (key id plus request hash), and consider requiring a bonded, encrypted link.
+  - **Enrolment trust**: enrolment is first-come-first-served, with no confirmation on either side.
+    It needs pairing confirmation (e.g. a code shown on the watch and confirmed with the key's button).
+  - **Challenge lifetime**: the challenge must be single-use, tied to one CTAP request and expire
+    with it; the stand-in only re-arms after a valid response.
+  - **Watch-side gate**: the Secure Enclave key has no access control flags, so anyone who can tap
+    Approve on the unlocked watch approves. That's the intended presence check, not a second factor.
 
 ## Architecture diagrams
 

@@ -56,7 +56,7 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
       # Unsigned compile check; installing on a watch needs Martin's signing identity.
-      - name: Build for watchOS
+      - name: Build the iOS stub and the watch app it embeds
         working-directory: watch/TinycryptWatch
         run: |
           xcodegen generate

@@ -34,7 +34,7 @@ ATtiny85 / U2F experiments live on the [`spike`](https://github.com/nakomis/tiny
 1. The browser asks the key (USB HID, CTAP2) for a WebAuthn assertion.
 2. The key sends an approval request: AWS IoT Core → SNS → APNs → actionable watch notification.
 3. You tap **Approve**; the watch connects to the key over BLE and signs a fresh nonce with its Secure Enclave key.
-   The watch must be in Bluetooth range: a remote approval is impossible. On a real watch this takes about 1.4 s.
+   The watch must be in Bluetooth range: a remote approval is impossible. On a real watch the Bluetooth exchange takes about 1.4 s after you tap.
 4. The key verifies the watch's signature, then signs the WebAuthn assertion and returns it to the browser.
 
 The firmware is split into a portable CTAP2 core with swappable transport, crypto, presence and
