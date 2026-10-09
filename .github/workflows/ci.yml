@@ -109,16 +109,37 @@ jobs:
           fi
 
   # The "Protect main" ruleset requires a check with exactly this name.
+  infra:
+    name: Infra (CDK)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: infra/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Type-check
+        run: pnpm run build
+      - name: Synth (sandbox)
+        run: pnpm run ci-synth-sandbox
+
   ci-status:
     name: CI Status
     if: always()
-    needs: [mac-sim, esp32s3, watch-app, lint]
+    needs: [mac-sim, esp32s3, watch-app, infra, lint]
     runs-on: ubuntu-latest
     steps:
       - name: All jobs passed
         run: |
-          echo 'mac-sim=${{ needs.mac-sim.result }} esp32s3=${{ needs.esp32s3.result }} watch-app=${{ needs.watch-app.result }} lint=${{ needs.lint.result }}'
+          echo 'mac-sim=${{ needs.mac-sim.result }} esp32s3=${{ needs.esp32s3.result }} watch-app=${{ needs.watch-app.result }} infra=${{ needs.infra.result }} lint=${{ needs.lint.result }}'
           test '${{ needs.mac-sim.result }}' = success
           test '${{ needs.esp32s3.result }}' = success
           test '${{ needs.watch-app.result }}' = success
+          test '${{ needs.infra.result }}' = success
           test '${{ needs.lint.result }}' = success

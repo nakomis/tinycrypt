@@ -11,14 +11,14 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
 ## Key architectural decisions
 
 - **Portable CTAP2 core + ports**: transport (USB HID | socket for the Mac sim), crypto/keystore
-  (ATECC608 | software key), presence, notifier (IoT Core → SNS → APNs). The same core builds for
+  (ATECC608 | software key), presence, notifier (IoT Core → Lambda → APNs). The same core builds for
   the ESP32-S3 and natively on macOS.
 - **Presence is button OR watch** (CRYPT-13): a physical button wired to the device and the watch
   approval are both armed, and the first to respond wins. The button must always work on its own;
   the watch is a convenience, not a stronger factor. Tests use auto-approve or deny.
 - **Layout** follows Martin's standard: code in top-level component folders, only docs and config at
   the root. `embedded/` holds all firmware (CMake sim build, `port/`, `sim/`, `esp32s3/`, `tests/`,
-  `third_party/`); the IoT/SNS CDK will go in `infra/`, the watch app in its own folder.
+  `third_party/`); the AWS CDK is in `infra/`, the watch app in its own folder.
 - **API domain** (house style): `api.tinycrypt.sandbox.nakomis.com` (sandbox) and
   `api.tinycrypt.nakomis.com` (prod). Derive them from the deploy environment in CDK; don't hard-code.
 - **CTAP2 core is SoloKeys solo1** (Apache-2.0 OR MIT), a submodule in `embedded/third_party/solo1`; never
@@ -65,6 +65,23 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
     with it; the stand-in only re-arms after a valid response.
   - **Watch-side gate**: the Secure Enclave key has no access control flags, so anyone who can tap
     Approve on the unlocked watch approves. That's the intended presence check, not a second factor.
+
+- **Push path** (CRYPT-12): the key publishes to `tinycrypt/{env}/presence/request`; an IoT rule (adding
+  `iotAt`) invokes the relay Lambda (`infra/lambda/push-relay.ts`), which sends an actionable alert
+  (category `PRESENCE`) **straight to APNs** over HTTP/2 with a JWT. No SNS: it needs a platform
+  application per bundle, holding the key, with no CloudFormation resource, for no gain. The Lambda
+  **never retries** (`retryAttempts: 0`, 60 s max event age): a late prompt could be approved for a
+  stale request. Measured on a real watch: publish → on the watch ~1.4–2.2 s; publish → APNs accepted
+  ~0.53 s warm, ~0.77–1.55 s cold.
+- **APNs key**: the live team-scoped key is **`25Z7VVWUQW`** (sandbox and production). tinycrypt keeps
+  its own copy in SSM at `/tinycrypt/{env}/apns/{team-id,key-id,private-key}`, put there by hand, so
+  the key never passes through CloudFormation. `VH26CFZ5GD`, still named in the cert portal's
+  `/home-certs/*/apns/key-id`, is revoked (APNs says `InvalidProviderToken`). The watch's device token is
+  `/tinycrypt/{env}/watch/device-token`, read from the app's run log (`push token …`). A
+  development-signed watch build only gets pushes from `api.sandbox.push.apple.com`.
+- **Infra deploys**: `cd infra && pnpm run deploy-sandbox` (profile `nakom.is-sandbox`). The account
+  comes from the profile, never a literal. pnpm 11's `exec esbuild` runs the native binary through node,
+  so the Lambda is bundled with the esbuild API in a local bundling hook, not `NodejsFunction`.
 
 ## Architecture diagrams
 

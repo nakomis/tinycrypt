@@ -32,11 +32,31 @@ final class AppDelegate: NSObject, WKApplicationDelegate, UNUserNotificationCent
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         center.setNotificationCategories([Presence.category])
+        // CRYPT-12: the real request arrives as an APNs push straight to the watch.
+        WKApplication.shared().registerForRemoteNotifications()
+    }
+
+    func didRegisterForRemoteNotifications(withDeviceToken deviceToken: Data) {
+        let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+        let model = AppModel.shared
+        Task { @MainActor in
+            if UserDefaults.standard.string(forKey: AppModel.pushTokenKey) != token {
+                UserDefaults.standard.set(token, forKey: AppModel.pushTokenKey)
+                model.record("push token \(token)")
+            }
+        }
+    }
+
+    func didFailToRegisterForRemoteNotificationsWithError(_ error: Error) {
+        Task { @MainActor in AppModel.shared.record("push registration failed: \(error)") }
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
         async -> UNNotificationPresentationOptions {
-        [.banner, .sound]
+        if let latency = Presence.pushLatency(notification) {
+            await MainActor.run { AppModel.shared.record("push shown in foreground \(latency)") }
+        }
+        return [.banner, .sound]
     }
 
     @MainActor
@@ -51,7 +71,7 @@ final class AppDelegate: NSObject, WKApplicationDelegate, UNUserNotificationCent
             "action": response.actionIdentifier,
             "appState": ["active", "inactive", "background"][min(state.rawValue, 2)],
             "processAgeMs": String(processAge),
-        ]
+        ].merging(Presence.pushLatency(response.notification) ?? [:]) { a, _ in a }
         guard response.actionIdentifier == Presence.approve else {
             AppModel.shared.record("\(response.actionIdentifier) (no BLE) \(context)")
             return
@@ -83,6 +103,25 @@ enum Presence {
         ],
         intentIdentifiers: [])
 
+    /// For an APNs push from the relay (CRYPT-12): milliseconds from the publisher's sentAt to `now` on
+    /// the watch (arrival, in willPresent; the tap, in didReceive). `notification.date` is APNs' own
+    /// stamp, not the watch's arrival, so it's reported separately. The clocks are the Mac's, AWS's and
+    /// the watch's, all NTP-synced, so expect tens of ms of skew.
+    static func pushLatency(_ notification: UNNotification, now: Date = .now) -> [String: String]? {
+        guard let tc = notification.request.content.userInfo["tc"] as? [String: Any],
+              let sentAt = (tc["sentAt"] as? NSNumber)?.int64Value else { return nil }
+        let ms = { (d: Date) in Int64(d.timeIntervalSince1970 * 1000) }
+        var out = [
+            "pushId": tc["id"] as? String ?? "?",
+            "sentToNowMs": String(ms(now) - sentAt),
+            "sentToApnsDateMs": String(ms(notification.date) - sentAt),
+        ]
+        if let lambdaAt = (tc["lambdaAt"] as? NSNumber)?.int64Value {
+            out["lambdaToNowMs"] = String(ms(now) - lambdaAt)
+        }
+        return out
+    }
+
     static func schedule(after seconds: TimeInterval) async throws {
         let center = UNUserNotificationCenter.current()
         _ = try await center.requestAuthorization(options: [.alert, .sound])
@@ -100,6 +139,7 @@ enum Presence {
 final class AppModel: ObservableObject {
     static let shared = AppModel()
     private static let logKey = "runLog"
+    static let pushTokenKey = "apnsDeviceToken"
 
     @Published var log: [String] = UserDefaults.standard.stringArray(forKey: logKey) ?? []
     private static let routeKey = "route"
