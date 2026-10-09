@@ -1,0 +1,21 @@
+{
+  "cases" : [
+    {
+      "message" : "74696e7963727970742d70726573656e63652d7630325e3cfd9fb36676be38872ef65a139dcfcd89ddd6fb3a788092d8aeac84068a",
+      "name" : "watch challenge 1",
+      "sha256" : "96c9d3071732c91057faecea40740603bb64ed64cc31351b5963281f9b7f680f",
+      "sig" : "d7b36825c572de60df59fedbd1e953a071fe1caa01eb6457d186763068a252d8aae0d2ce6d29bec5f1f634108507806b5ec40b4bf85832d665ea8fd470a02c18"
+    },
+    {
+      "message" : "74696e7963727970742d70726573656e63652d76302166cb1e313adb6a11d1731affd859ebbf31a5ab560af1a0f6ab99b14ad538ba",
+      "name" : "watch challenge 2",
+      "sha256" : "c08a5e2f90a135b08b85065350949d5b317bcac1379c8e0ff6ade0bfffaf1993",
+      "sig" : "3251f0322530538a550047e50c95c87e1065b934d791085ff3ff5134470050333c3bf812e0c3c08a38c2853b1a839a7836989493e98895be607cd509c1bf48bc"
+    }
+  ],
+  "description" : "P-256 signatures from a real Apple Watch Secure Enclave key via CryptoKit signature(for: Data), over BLE presence challenges (CRYPT-11). The signed value is SHA-256(message); message = \"tinycrypt-presence-v0\" || nonce(32). Formats: pub = X||Y (64 bytes), sig = r||s (64 bytes).",
+  "generated" : "2026-10-09T22:58:05Z",
+  "platform" : "watchOS 27.0.1 Watch8,2",
+  "pub" : "4e91f82d2e4ec96c0d159e9f3d61945de9482b1de4c03caa0f5cdf7eee5d50f94a0520c835dacca0cbe498d69d74217b9f7e3204c64e74bc28578e026eb8400e",
+  "source" : "secure-enclave"
+}
