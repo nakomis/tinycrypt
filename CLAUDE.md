@@ -44,6 +44,14 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   signature `r‖s` (64 bytes, `rawRepresentation`). High-S signatures are accepted, as CryptoKit does.
   The frozen vector is `embedded/tests/vectors/se_p256.json`, made by `watch/tools/se-vector`
   (`swift run --package-path watch/tools/se-vector se-vector`; regenerate only on purpose).
+  `se_p256_watch.json` holds two signatures from Martin's real watch over BLE challenges (CRYPT-11).
+- **BLE roles** (CRYPT-11): `CBPeripheralManager` is unavailable on watchOS, so the **key is the GATT
+  peripheral and the watch the central**. Proximity is the point of BLE: the cloud only sends the
+  notification, and the approval itself must come over the air from a watch in range. Reconnect by
+  **retrieving the peripheral by identifier** (saved at enrolment): it works from the foreground, the
+  background and a cold launch (~1.4 s from tap to verified). **Scanning doesn't work from the
+  background** on watchOS 27 (never discovered in 20 s; ~150 ms in the foreground), so scan only
+  while the app is open (enrolment, or as a fallback). Key-side timeout must allow ~2 s plus slack.
 
 ## Architecture diagrams
 

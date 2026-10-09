@@ -11,9 +11,9 @@ struct ContentView: View {
                 Text("Key \(fingerprint)").font(.caption.monospaced())
                 Button("Enrol with key") { enrol() }.disabled(busy)
                 Button("Arm in 10 s") { arm() }.disabled(busy)
-                Picker("Reconnect", selection: $model.route) {
-                    Text("Retrieve").tag(PresenceClient.Route.retrieve)
-                    Text("Scan").tag(PresenceClient.Route.scan)
+                // A wheel Picker is clipped unreadably on the watch; a toggle button is clearer.
+                Button("Route: \(model.route == .retrieve ? "Retrieve" : "Scan")") {
+                    model.route = model.route == .retrieve ? .scan : .retrieve
                 }
                 ForEach(model.log, id: \.self) { Text($0).font(.system(size: 11).monospaced()) }
             }

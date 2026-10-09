@@ -94,7 +94,11 @@ final class AppModel: ObservableObject {
     private static let logKey = "runLog"
 
     @Published var log: [String] = UserDefaults.standard.stringArray(forKey: logKey) ?? []
-    @Published var route: PresenceClient.Route = .retrieve
+    private static let routeKey = "route"
+    // Persisted so a cold launch from the notification uses the route chosen in the UI.
+    @Published var route = PresenceClient.Route(rawValue: UserDefaults.standard.string(forKey: routeKey) ?? "") ?? .retrieve {
+        didSet { UserDefaults.standard.set(route.rawValue, forKey: Self.routeKey) }
+    }
 
     func record(_ report: PresenceReport) {
         let head = report.error == nil ? "OK" : "FAIL"
