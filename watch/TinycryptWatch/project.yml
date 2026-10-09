@@ -16,11 +16,15 @@ targets:
   TinycryptWatch:
     type: application
     platform: watchOS
-    sources: [Sources]
+    sources: [Sources, Resources/Assets.xcassets]
     info:
       path: Resources/Info.plist
       properties:
         CFBundleDisplayName: tinycrypt
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Standard crypto only (ECDSA signatures): exempt from export documentation.
+        ITSAppUsesNonExemptEncryption: false
         WKApplication: true
         WKWatchOnly: true
         NSBluetoothAlwaysUsageDescription: tinycrypt talks to your security key over Bluetooth to approve sign-ins.
@@ -29,4 +33,4 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nakomis.tinycrypt.watch
         GENERATE_INFOPLIST_FILE: NO
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
