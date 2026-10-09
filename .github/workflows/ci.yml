@@ -61,7 +61,7 @@ jobs:
         run: |
           xcodegen generate
           xcodebuild -project TinycryptWatch.xcodeproj -scheme TinycryptWatch \
-            -destination 'generic/platform=watchOS' CODE_SIGNING_ALLOWED=NO build
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
 
   esp32s3:
     name: ESP32-S3 firmware

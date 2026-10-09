@@ -1,19 +1,37 @@
 # Watch-only spike app for CRYPT-11. Generate with `xcodegen generate`; the
 # .xcodeproj is not committed.
+#
+# Laid out like Xcode's "Watch-only App" template: the App Store (and TestFlight)
+# takes an iOS stub (watchapp2-container) that embeds the real watch app. Archive
+# the TinycryptWatch scheme; it has no iPhone UI and never installs on the phone.
 name: TinycryptWatch
 options:
   bundleIdPrefix: com.nakomis.tinycrypt
   deploymentTarget:
     watchOS: "26.0"
+    iOS: "26.0"
 settings:
   base:
     DEVELOPMENT_TEAM: 62YFUFBSFX
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.1"
-    CURRENT_PROJECT_VERSION: "1"
+    CURRENT_PROJECT_VERSION: "2"
 targets:
+  # The iOS stub: what gets uploaded. No sources of its own.
   TinycryptWatch:
+    type: application.watchapp2-container
+    platform: iOS
+    dependencies:
+      - target: TinycryptWatchApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nakomis.tinycrypt.watch
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: tinycrypt
+
+  # The watch app itself.
+  TinycryptWatchApp:
     type: application
     platform: watchOS
     sources: [Sources, Resources/Assets.xcassets]
@@ -31,9 +49,15 @@ targets:
         UIBackgroundModes: [bluetooth-central]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.nakomis.tinycrypt.watch
+        PRODUCT_NAME: TinycryptWatch
+        PRODUCT_BUNDLE_IDENTIFIER: com.nakomis.tinycrypt.watch.watchkitapp
         GENERATE_INFOPLIST_FILE: NO
-        # XcodeGen assumes a watch app is embedded in an iPhone app; a watch-only
-        # app must install itself, or the archive is empty ("Generic Xcode Archive").
-        SKIP_INSTALL: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+schemes:
+  TinycryptWatch:
+    build:
+      targets:
+        TinycryptWatch: all
+        TinycryptWatchApp: all
+    archive:
+      config: Release
