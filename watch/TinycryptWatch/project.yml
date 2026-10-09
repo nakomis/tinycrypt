@@ -33,4 +33,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nakomis.tinycrypt.watch
         GENERATE_INFOPLIST_FILE: NO
+        # XcodeGen assumes a watch app is embedded in an iPhone app; a watch-only
+        # app must install itself, or the archive is empty ("Generic Xcode Archive").
+        SKIP_INSTALL: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
