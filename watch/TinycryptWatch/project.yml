@@ -61,3 +61,10 @@ schemes:
         TinycryptWatchApp: all
     archive:
       config: Release
+  # Runs the watch app directly on a watch from Xcode (Developer Mode needed).
+  TinycryptWatchApp:
+    build:
+      targets:
+        TinycryptWatchApp: all
+    run:
+      config: Debug
