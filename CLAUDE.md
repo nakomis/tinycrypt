@@ -18,7 +18,7 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   the watch is a convenience, not a stronger factor. Tests use auto-approve or deny.
 - **Layout** follows Martin's standard: code in top-level component folders, only docs and config at
   the root. `embedded/` holds all firmware (CMake sim build, `port/`, `sim/`, `esp32s3/`, `tests/`,
-  `third_party/`); the IoT/SNS CDK will go in `infra/`, the watch app in its own folder.
+  `third_party/`); the AWS CDK is in `infra/`, the watch app in its own folder.
 - **API domain** (house style): `api.tinycrypt.sandbox.nakomis.com` (sandbox) and
   `api.tinycrypt.nakomis.com` (prod). Derive them from the deploy environment in CDK; don't hard-code.
 - **CTAP2 core is SoloKeys solo1** (Apache-2.0 OR MIT), a submodule in `embedded/third_party/solo1`; never
@@ -65,6 +65,28 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
     with it; the stand-in only re-arms after a valid response.
   - **Watch-side gate**: the Secure Enclave key has no access control flags, so anyone who can tap
     Approve on the unlocked watch approves. That's the intended presence check, not a second factor.
+
+- **Push path** (CRYPT-12): the key publishes to `tinycrypt/{env}/presence/request`; an IoT rule's SNS
+  action sends it to the `tinycrypt-presence-{env}` topic, and SNS delivers it to the watch's APNs
+  platform endpoint. **No Lambda** (Martin's call): sign-ins are rare, so a Lambda would nearly always be
+  cold (+~0.9 s measured). The key publishes SNS's JSON message structure itself:
+  `{"default": "...", "APNS_SANDBOX": "<APNs payload as a JSON string>"}` (`APNS` in prod), with
+  category `PRESENCE`. Measured on a real watch: publish → on the watch 1.3–2.4 s; SNS holds a
+  message for 25–44 ms (`dwellTimeMs` in its delivery logs).
+- **Stale prompts**: an IoT SNS action can't set message attributes, so there's no
+  `AWS.SNS.MOBILE.APNS.TTL`, and APNs may store a push for an offline watch and deliver it late. The
+  real guard is the key: its BLE challenge is single-use and expires with the CTAP request, so a late
+  Approve finds nothing to sign. The watch should also refuse requests older than ~60 s.
+- **SNS setup** CloudFormation can't do: `infra/scripts/sns-platform.sh <device-token>` creates or updates
+  the platform application `tinycrypt-watch-{env}` (key from SSM, delivery logging on), the watch's
+  endpoint and its subscription. Safe to re-run. The device token comes from the watch app's run log
+  (`push token …`). A development-signed watch build only gets pushes from the APNs sandbox.
+- **APNs key**: the live team-scoped key is **`25Z7VVWUQW`** (sandbox and production). tinycrypt keeps
+  its own copy in SSM at `/tinycrypt/{env}/apns/{team-id,key-id,private-key}`, put there by hand.
+  `VH26CFZ5GD`, still named in the cert portal's `/home-certs/*/apns/key-id`, is revoked (APNs says
+  `InvalidProviderToken`).
+- **Infra deploys**: `cd infra && pnpm run deploy-sandbox` (profile `nakom.is-sandbox`). The account
+  comes from the profile, never a literal.
 
 ## Architecture diagrams
 
