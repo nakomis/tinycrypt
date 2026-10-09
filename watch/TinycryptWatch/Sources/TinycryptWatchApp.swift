@@ -72,6 +72,12 @@ final class AppDelegate: NSObject, WKApplicationDelegate, UNUserNotificationCent
             "appState": ["active", "inactive", "background"][min(state.rawValue, 2)],
             "processAgeMs": String(processAge),
         ].merging(Presence.pushLatency(response.notification) ?? [:]) { a, _ in a }
+        // SNS can't give APNs an expiry, so a push for an offline watch can turn up late. Never act on
+        // a stale request; the key's challenge will have expired anyway. (sentAt is the key's clock.)
+        if let age = context["sentToNowMs"].flatMap(Int.init), age > Presence.maxAgeMs {
+            AppModel.shared.record("STALE request refused (\(age / 1000) s old) \(context)")
+            return
+        }
         guard response.actionIdentifier == Presence.approve else {
             AppModel.shared.record("\(response.actionIdentifier) (no BLE) \(context)")
             return
@@ -93,6 +99,8 @@ enum Presence {
     static let categoryID = "PRESENCE"
     static let approve = "APPROVE"
     static let deny = "DENY"
+    /// Requests older than this (by the key's clock) are refused, not approved.
+    static let maxAgeMs = 60_000
 
     /// Approve has no .foreground option: the point is to do the BLE work without opening the app.
     static let category = UNNotificationCategory(
@@ -116,9 +124,6 @@ enum Presence {
             "sentToNowMs": String(ms(now) - sentAt),
             "sentToApnsDateMs": String(ms(notification.date) - sentAt),
         ]
-        if let lambdaAt = (tc["lambdaAt"] as? NSNumber)?.int64Value {
-            out["lambdaToNowMs"] = String(ms(now) - lambdaAt)
-        }
         return out
     }
 

@@ -11,15 +11,12 @@
     "ci-synth-sandbox": "NPM_ENVIRONMENT=sandbox CDK_DEFAULT_ACCOUNT=000000000000 cdk synth --all"
   },
   "dependencies": {
-    "@aws-sdk/client-ssm": "^3.0.0",
     "aws-cdk-lib": "2.257.0",
     "constructs": "^10.0.0"
   },
   "devDependencies": {
-    "@types/aws-lambda": "^8.10.0",
-    "@types/node": "25.x",
+    "@types/node": "22.x",
     "aws-cdk": "^2.1125.0",
-    "esbuild": "^0.25.0",
     "ts-node": "^10.9.2",
     "typescript": "~6.0.3"
   }

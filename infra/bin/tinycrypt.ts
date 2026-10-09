@@ -16,5 +16,5 @@ const app = new cdk.App();
 new PushStack(app, 'TinycryptPushStack', {
     env,
     deployEnv,
-    description: `tinycrypt presence push: IoT rule -> Lambda -> APNs -> watch (${deployEnv})`,
+    description: `tinycrypt presence push: IoT rule -> SNS -> APNs -> watch (${deployEnv})`,
 });

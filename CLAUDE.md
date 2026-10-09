@@ -11,7 +11,7 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
 ## Key architectural decisions
 
 - **Portable CTAP2 core + ports**: transport (USB HID | socket for the Mac sim), crypto/keystore
-  (ATECC608 | software key), presence, notifier (IoT Core → Lambda → APNs). The same core builds for
+  (ATECC608 | software key), presence, notifier (IoT Core → SNS → APNs). The same core builds for
   the ESP32-S3 and natively on macOS.
 - **Presence is button OR watch** (CRYPT-13): a physical button wired to the device and the watch
   approval are both armed, and the first to respond wins. The button must always work on its own;
@@ -66,22 +66,27 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   - **Watch-side gate**: the Secure Enclave key has no access control flags, so anyone who can tap
     Approve on the unlocked watch approves. That's the intended presence check, not a second factor.
 
-- **Push path** (CRYPT-12): the key publishes to `tinycrypt/{env}/presence/request`; an IoT rule (adding
-  `iotAt`) invokes the relay Lambda (`infra/lambda/push-relay.ts`), which sends an actionable alert
-  (category `PRESENCE`) **straight to APNs** over HTTP/2 with a JWT. No SNS: it needs a platform
-  application per bundle, holding the key, with no CloudFormation resource, for no gain. The Lambda
-  **never retries** (`retryAttempts: 0`, 60 s max event age): a late prompt could be approved for a
-  stale request. Measured on a real watch: publish → on the watch ~1.4–2.2 s; publish → APNs accepted
-  ~0.53 s warm, ~0.77–1.55 s cold.
+- **Push path** (CRYPT-12): the key publishes to `tinycrypt/{env}/presence/request`; an IoT rule's SNS
+  action sends it to the `tinycrypt-presence-{env}` topic, and SNS delivers it to the watch's APNs
+  platform endpoint. **No Lambda** (Martin's call): sign-ins are rare, so a Lambda would nearly always be
+  cold (+~0.9 s measured). The key publishes SNS's JSON message structure itself:
+  `{"default": "...", "APNS_SANDBOX": "<APNs payload as a JSON string>"}` (`APNS` in prod), with
+  category `PRESENCE`. Measured on a real watch: publish → on the watch 1.3–2.4 s; SNS holds a
+  message for 25–44 ms (`dwellTimeMs` in its delivery logs).
+- **Stale prompts**: an IoT SNS action can't set message attributes, so there's no
+  `AWS.SNS.MOBILE.APNS.TTL`, and APNs may store a push for an offline watch and deliver it late. The
+  real guard is the key: its BLE challenge is single-use and expires with the CTAP request, so a late
+  Approve finds nothing to sign. The watch should also refuse requests older than ~60 s.
+- **SNS setup** CloudFormation can't do: `infra/scripts/sns-platform.sh <device-token>` creates or updates
+  the platform application `tinycrypt-watch-{env}` (key from SSM, delivery logging on), the watch's
+  endpoint and its subscription. Safe to re-run. The device token comes from the watch app's run log
+  (`push token …`). A development-signed watch build only gets pushes from the APNs sandbox.
 - **APNs key**: the live team-scoped key is **`25Z7VVWUQW`** (sandbox and production). tinycrypt keeps
-  its own copy in SSM at `/tinycrypt/{env}/apns/{team-id,key-id,private-key}`, put there by hand, so
-  the key never passes through CloudFormation. `VH26CFZ5GD`, still named in the cert portal's
-  `/home-certs/*/apns/key-id`, is revoked (APNs says `InvalidProviderToken`). The watch's device token is
-  `/tinycrypt/{env}/watch/device-token`, read from the app's run log (`push token …`). A
-  development-signed watch build only gets pushes from `api.sandbox.push.apple.com`.
+  its own copy in SSM at `/tinycrypt/{env}/apns/{team-id,key-id,private-key}`, put there by hand.
+  `VH26CFZ5GD`, still named in the cert portal's `/home-certs/*/apns/key-id`, is revoked (APNs says
+  `InvalidProviderToken`).
 - **Infra deploys**: `cd infra && pnpm run deploy-sandbox` (profile `nakom.is-sandbox`). The account
-  comes from the profile, never a literal. pnpm 11's `exec esbuild` runs the native binary through node,
-  so the Lambda is bundled with the esbuild API in a local bundling hook, not `NodejsFunction`.
+  comes from the profile, never a literal.
 
 ## Architecture diagrams
 
