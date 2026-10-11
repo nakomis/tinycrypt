@@ -16,3 +16,6 @@ bool notifier_start(void);
 // Call as each presence wait is armed. Sends a request only when the wait starts a new user action
 // (presence_is_new_action()). Doesn't normally block: the publish is queued for the MQTT task.
 void notifier_presence_wait_started(void);
+
+// Call as each presence wait ends: drops a request still held for a connection.
+void notifier_presence_wait_ended(void);

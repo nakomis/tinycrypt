@@ -22,6 +22,7 @@
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
 #include "mqtt_client.h"
 #include "sdkconfig.h"
 
@@ -39,10 +40,17 @@ extern const char device_key_start[] asm("_binary_device_pem_key_start");
 
 static esp_mqtt_client_handle_t mqtt;
 static volatile bool mqtt_connected;
+
+// A request made while not connected (e.g. a sign-in seconds after the key is plugged in) is held
+// and sent as soon as MQTT connects, if its wait is still running.
+static portMUX_TYPE pending_lock = portMUX_INITIALIZER_UNLOCKED;
+static bool pending;
 static esp_timer_handle_t wifi_retry;
 static uint32_t wifi_retry_ms = WIFI_RETRY_MIN_MS;
 static bool started;
 
+
+static void send_request(void);
 
 static void wifi_retry_fire(void *arg)
 {
@@ -77,9 +85,20 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     switch ((esp_mqtt_event_id_t)id)
     {
     case MQTT_EVENT_CONNECTED:
+    {
         mqtt_connected = true;
         ESP_LOGI(TAG, "MQTT connected to IoT Core as %s", CONFIG_TINYCRYPT_THING_NAME);
+        taskENTER_CRITICAL(&pending_lock);
+        bool send_now = pending;
+        pending = false;
+        taskEXIT_CRITICAL(&pending_lock);
+        if (send_now)
+        {
+            ESP_LOGI(TAG, "sending the presence request held while offline");
+            send_request();
+        }
         break;
+    }
     case MQTT_EVENT_DISCONNECTED:
         mqtt_connected = false;
         ESP_LOGW(TAG, "MQTT disconnected");
@@ -189,9 +208,14 @@ static int64_t epoch_ms(void)
 
 static void send_request(void)
 {
-    if (!started || !mqtt_connected)
+    if (!started)
+        return;
+    if (!mqtt_connected)
     {
-        ESP_LOGW(TAG, "not connected: no presence request sent (the button still works)");
+        taskENTER_CRITICAL(&pending_lock);
+        pending = true;
+        taskEXIT_CRITICAL(&pending_lock);
+        ESP_LOGW(TAG, "not connected yet: presence request held until MQTT connects (the button works)");
         return;
     }
 
@@ -246,4 +270,12 @@ void notifier_presence_wait_started(void)
     // One push per user action (presence.h): U2F's 750 ms re-asks don't each buzz the watch.
     if (presence_is_new_action())
         send_request();
+}
+
+void notifier_presence_wait_ended(void)
+{
+    // A request still held for a connection is stale once its wait is over.
+    taskENTER_CRITICAL(&pending_lock);
+    pending = false;
+    taskEXIT_CRITICAL(&pending_lock);
 }

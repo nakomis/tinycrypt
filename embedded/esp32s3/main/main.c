@@ -240,8 +240,15 @@ static void notifier_arm(void *ctx)
     notifier_presence_wait_started();
 }
 
+static void notifier_disarm(void *ctx, int result)
+{
+    (void)ctx;
+    (void)result;
+    notifier_presence_wait_ended();
+}
+
 // Sends the push; never approves (the watch's answer comes back over BLE).
-static const presence_source notifier_source = {"push", NULL, notifier_arm, NULL, NULL};
+static const presence_source notifier_source = {"push", NULL, notifier_arm, NULL, notifier_disarm};
 #endif
 
 static int presence_recv(uint8_t report[PRESENCE_REPORT_SIZE], uint32_t timeout_ms)
