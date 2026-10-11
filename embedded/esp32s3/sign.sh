@@ -33,6 +33,11 @@ IDF_PATH="${IDF_PATH:-$HOME/esp/v5.5/esp-idf}"
 dir=$(mktemp -d)
 trap 'rm -P "$dir"/* 2>/dev/null; rmdir "$dir"' EXIT
 printf '%s' "$key_b64" | base64 -d > "$dir/key.pem"
+# A build with nothing to do leaves the last, signed image: check it rather than add a second block.
+if espsecure.py verify_signature --version 2 --keyfile "$dir/key.pem" "$bin" > /dev/null 2>&1; then
+    echo "$bin is already signed ($env key)"
+    exit 0
+fi
 espsecure.py sign_data --version 2 --keyfile "$dir/key.pem" --output "$dir/signed.bin" "$bin" > /dev/null
 espsecure.py verify_signature --version 2 --keyfile "$dir/key.pem" "$dir/signed.bin" > /dev/null
 mv "$dir/signed.bin" "$bin"

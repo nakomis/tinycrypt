@@ -11,7 +11,5 @@ IDF_PATH="${IDF_PATH:-$HOME/esp/v5.5/esp-idf}"
 if [ $# -gt 0 ]; then
     exec idf.py -DTINYCRYPT_INSECURE_SOFT_KEY=ON "$@"
 fi
-# Always a fresh, unsigned image to sign (signing one that's already signed would add a second block).
-rm -f build/tinycrypt.bin
 idf.py -DTINYCRYPT_INSECURE_SOFT_KEY=ON build
 ./sign.sh build/tinycrypt.bin
