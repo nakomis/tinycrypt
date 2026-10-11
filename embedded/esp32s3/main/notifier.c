@@ -46,7 +46,12 @@ static volatile bool mqtt_connected;
 // and sent as soon as MQTT connects, if its wait is still running.
 static portMUX_TYPE pending_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool pending;
-static bool ever_connected;  // before the first connection the LED says "connecting", after it "offline"
+// Before the first connection the LED says "connecting", and "offline" once it has connected
+// before or CONNECT_DEADLINE_MS has passed without a connection (bad credentials, AP down).
+static volatile bool ever_connected;
+static volatile bool connect_overdue;
+static esp_timer_handle_t connect_deadline;
+#define CONNECT_DEADLINE_MS 20000
 static esp_timer_handle_t wifi_retry;
 static uint32_t wifi_retry_ms = WIFI_RETRY_MIN_MS;
 static bool started;
@@ -61,6 +66,16 @@ static void wifi_retry_fire(void *arg)
         ESP_LOGW(TAG, "esp_wifi_connect: %s", esp_err_to_name(err));
 }
 
+static void connect_deadline_fire(void *arg)
+{
+    if (mqtt_connected)
+        return;
+    connect_overdue = true;
+    ESP_LOGW(TAG, "not connected after %d s: showing offline (the button works)", CONNECT_DEADLINE_MS / 1000);
+    led_status_set(LED_CONNECTING, false);
+    led_status_set(LED_OFFLINE, true);
+}
+
 static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START)
@@ -69,7 +84,7 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     {
         // MQTT only notices a dead socket at its next keepalive; stop queueing into it now.
         mqtt_connected = false;
-        if (ever_connected)
+        if (ever_connected || connect_overdue)
             led_status_set(LED_OFFLINE, true);
         ESP_LOGW(TAG, "Wi-Fi disconnected (reason %d), retrying in %" PRIu32 " ms",
                  ((wifi_event_sta_disconnected_t *)data)->reason, wifi_retry_ms);
@@ -110,7 +125,7 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
     case MQTT_EVENT_DISCONNECTED:
         mqtt_connected = false;
-        if (ever_connected)
+        if (ever_connected || connect_overdue)
             led_status_set(LED_OFFLINE, true);
         ESP_LOGW(TAG, "MQTT disconnected");
         break;
@@ -160,6 +175,9 @@ bool notifier_start(void)
     TRY(esp_wifi_init(&init));
     const esp_timer_create_args_t retry = {.callback = wifi_retry_fire, .name = "wifi_retry"};
     TRY(esp_timer_create(&retry, &wifi_retry));
+    const esp_timer_create_args_t deadline = {.callback = connect_deadline_fire, .name = "connect_deadline"};
+    TRY(esp_timer_create(&deadline, &connect_deadline));
+    TRY(esp_timer_start_once(connect_deadline, (uint64_t)CONNECT_DEADLINE_MS * 1000));
     TRY(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, NULL));
     TRY(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event, NULL));
 
