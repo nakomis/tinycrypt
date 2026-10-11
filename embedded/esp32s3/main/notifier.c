@@ -6,6 +6,7 @@
 // tc.sentAt (ms since the epoch, from SNTP) lets the watch time the trip and refuse stale requests.
 // The push carries no authority: approval only counts once the watch signs the key's BLE challenge.
 #include "notifier.h"
+#include "led_status.h"
 #include "presence.h"
 
 #include <inttypes.h>
@@ -45,6 +46,16 @@ static volatile bool mqtt_connected;
 // and sent as soon as MQTT connects, if its wait is still running.
 static portMUX_TYPE pending_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool pending;
+// The request a push is for, copied in the CTAP task when its wait starts (under pending_lock):
+// the MQTT task may send a held push while the next wait is rewriting presence's own copy.
+static char held_rp[PRESENCE_RP_MAX];
+static uint8_t held_hash[PRESENCE_REQUEST_HASH_LEN];
+// Before the first connection the LED says "connecting", and "offline" once it has connected
+// before or CONNECT_DEADLINE_MS has passed without a connection (bad credentials, AP down).
+static volatile bool ever_connected;
+static volatile bool connect_overdue;
+static esp_timer_handle_t connect_deadline;
+#define CONNECT_DEADLINE_MS 20000
 static esp_timer_handle_t wifi_retry;
 static uint32_t wifi_retry_ms = WIFI_RETRY_MIN_MS;
 static bool started;
@@ -59,6 +70,16 @@ static void wifi_retry_fire(void *arg)
         ESP_LOGW(TAG, "esp_wifi_connect: %s", esp_err_to_name(err));
 }
 
+static void connect_deadline_fire(void *arg)
+{
+    if (mqtt_connected)
+        return;
+    connect_overdue = true;
+    ESP_LOGW(TAG, "not connected after %d s: showing offline (the button works)", CONNECT_DEADLINE_MS / 1000);
+    led_status_set(LED_CONNECTING, false);
+    led_status_set(LED_OFFLINE, true);
+}
+
 static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START)
@@ -67,6 +88,8 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     {
         // MQTT only notices a dead socket at its next keepalive; stop queueing into it now.
         mqtt_connected = false;
+        if (ever_connected || connect_overdue)
+            led_status_set(LED_OFFLINE, true);
         ESP_LOGW(TAG, "Wi-Fi disconnected (reason %d), retrying in %" PRIu32 " ms",
                  ((wifi_event_sta_disconnected_t *)data)->reason, wifi_retry_ms);
         esp_timer_start_once(wifi_retry, (uint64_t)wifi_retry_ms * 1000);
@@ -88,6 +111,11 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     {
         mqtt_connected = true;
         ESP_LOGI(TAG, "MQTT connected to IoT Core as %s", CONFIG_TINYCRYPT_THING_NAME);
+        led_status_set(LED_CONNECTING, false);
+        led_status_set(LED_OFFLINE, false);
+        if (!ever_connected)
+            led_status_flash(LED_FLASH_ONLINE);
+        ever_connected = true;
         taskENTER_CRITICAL(&pending_lock);
         bool send_now = pending;
         pending = false;
@@ -101,6 +129,8 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
     case MQTT_EVENT_DISCONNECTED:
         mqtt_connected = false;
+        if (ever_connected || connect_overdue)
+            led_status_set(LED_OFFLINE, true);
         ESP_LOGW(TAG, "MQTT disconnected");
         break;
     case MQTT_EVENT_PUBLISHED:
@@ -149,6 +179,9 @@ bool notifier_start(void)
     TRY(esp_wifi_init(&init));
     const esp_timer_create_args_t retry = {.callback = wifi_retry_fire, .name = "wifi_retry"};
     TRY(esp_timer_create(&retry, &wifi_retry));
+    const esp_timer_create_args_t deadline = {.callback = connect_deadline_fire, .name = "connect_deadline"};
+    TRY(esp_timer_create(&deadline, &connect_deadline));
+    TRY(esp_timer_start_once(connect_deadline, (uint64_t)CONNECT_DEADLINE_MS * 1000));
     TRY(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, NULL));
     TRY(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event, NULL));
 
@@ -226,18 +259,37 @@ static void send_request(void)
         snprintf(&id[2 * i], 3, "%02x", raw[i]);
     int64_t sent_at = epoch_ms();
 
-    // TODO(BLE firmware): add a hash of the CTAP request, bound into the BLE challenge, so a late
-    // or replayed push can't approve a different request.
+    // The request this push is for (CRYPT-18): the watch only signs a BLE challenge carrying the
+    // same hash, and shows the site so you know what you're approving. presence only binds a site
+    // that is a plain host name, so it can go into the alert as it is.
+    char rp[PRESENCE_RP_MAX];
+    uint8_t hash[PRESENCE_REQUEST_HASH_LEN];
+    taskENTER_CRITICAL(&pending_lock);
+    memcpy(rp, held_rp, sizeof(rp));
+    memcpy(hash, held_hash, sizeof(hash));
+    taskEXIT_CRITICAL(&pending_lock);
+    char req[2 * PRESENCE_REQUEST_HASH_LEN + 1];
+    for (int i = 0; i < PRESENCE_REQUEST_HASH_LEN; i++)
+        snprintf(&req[2 * i], 3, "%02x", hash[i]);
+    char body[PRESENCE_RP_MAX + 32];
+    if (rp[0])
+        snprintf(body, sizeof(body), "Sign in to %s?", rp);
+    else
+        snprintf(body, sizeof(body), "Your security key wants approval");
+
     cJSON *apns = cJSON_CreateObject();
     cJSON *aps = cJSON_AddObjectToObject(apns, "aps");
     cJSON *alert = cJSON_AddObjectToObject(aps, "alert");
     cJSON_AddStringToObject(alert, "title", "Sign in?");
-    cJSON_AddStringToObject(alert, "body", "Your security key wants approval");
+    cJSON_AddStringToObject(alert, "body", body);
     cJSON_AddStringToObject(aps, "category", "PRESENCE");
     cJSON_AddStringToObject(aps, "sound", "default");
     cJSON *tc = cJSON_AddObjectToObject(apns, "tc");
     cJSON_AddStringToObject(tc, "id", id);
     cJSON_AddStringToObject(tc, "key", CONFIG_TINYCRYPT_THING_NAME);
+    cJSON_AddStringToObject(tc, "req", req);
+    if (rp[0])
+        cJSON_AddStringToObject(tc, "rp", rp);
     if (sent_at)
         cJSON_AddNumberToObject(tc, "sentAt", (double)sent_at);
     char *apns_text = cJSON_PrintUnformatted(apns);
@@ -267,9 +319,18 @@ static void send_request(void)
 
 void notifier_presence_wait_started(void)
 {
+    // Only a request the watch can approve gets a push (presence.h); anything else is button only.
+    if (!presence_request_bound())
+        return;
     // One push per user action (presence.h): U2F's 750 ms re-asks don't each buzz the watch.
     if (presence_is_new_action())
+    {
+        taskENTER_CRITICAL(&pending_lock);
+        memcpy(held_rp, presence_request_rp(), sizeof(held_rp));
+        memcpy(held_hash, presence_request_hash(), sizeof(held_hash));
+        taskEXIT_CRITICAL(&pending_lock);
         send_request();
+    }
 }
 
 void notifier_presence_wait_ended(void)

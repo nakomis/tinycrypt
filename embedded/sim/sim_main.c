@@ -150,20 +150,28 @@ static bool button_approved(void *ctx)
     return false;
 }
 
-// The watch, scripted: approves watch_after_ms into the wait.
+// The watch, scripted: approves watch_after_ms into the wait, if the wait is bound to its request
+// (presence.h); an unbound wait is button only, as on the device.
 static uint32_t watch_armed_at;
+static bool watch_armed;
 
 static void watch_arm(void *ctx)
 {
     (void)ctx;
     watch_armed_at = millis();
+    watch_armed = presence_request_bound();
     fprintf(stderr, ">>> %s action\n", presence_is_new_action() ? "new" : "same");
+    const uint8_t *h = presence_request_hash();
+    fprintf(stderr, ">>> request %s rp=%s hash=", watch_armed ? "bound" : "unbound", presence_request_rp());
+    for (int i = 0; i < PRESENCE_REQUEST_HASH_LEN; i++)
+        fprintf(stderr, "%02x", h[i]);
+    fprintf(stderr, "\n");
 }
 
 static bool watch_approved(void *ctx)
 {
     (void)ctx;
-    if (watch_after_ms == 0 || millis() - watch_armed_at < watch_after_ms)
+    if (!watch_armed || watch_after_ms == 0 || millis() - watch_armed_at < watch_after_ms)
         return false;
     fprintf(stderr, ">>> watch approved\n");
     return true;

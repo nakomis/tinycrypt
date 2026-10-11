@@ -40,6 +40,7 @@
 #ifdef TINYCRYPT_SE_SELFTEST
 #include "se_selftest.h"
 #endif
+#include "led_status.h"
 #include "presence.h"
 #include "sdkconfig.h"
 #ifdef CONFIG_TINYCRYPT_NOTIFIER
@@ -233,6 +234,31 @@ static void report_result(void *ctx, int result)
 
 static const presence_source button_source = {"button", NULL, button_arm, button_approved, report_result};
 
+// The status LED as a source: blue while waiting, then green or red for the result.
+static uint32_t led_wait_started;
+
+static void led_arm(void *ctx)
+{
+    (void)ctx;
+    led_wait_started = millis();
+    led_status_set(LED_PRESENCE, true);
+}
+
+static void led_disarm(void *ctx, int result)
+{
+    (void)ctx;
+    led_status_set(LED_PRESENCE, false);
+    led_status_set(LED_WATCH_SIGNING, false);
+    // U2F re-asks every 750 ms, each a short wait ending unapproved: flash red only when the user
+    // action is really over (cancelled, or a full-length wait that timed out).
+    if (result == 1)
+        led_status_flash(LED_FLASH_APPROVED);
+    else if (presence_was_cancelled() || millis() - led_wait_started >= PRESENCE_SHORT_WAIT_MS)
+        led_status_flash(LED_FLASH_NOT_GIVEN);
+}
+
+static const presence_source led_source = {"led", NULL, led_arm, NULL, led_disarm};
+
 #ifdef CONFIG_TINYCRYPT_NOTIFIER
 static void notifier_arm(void *ctx)
 {
@@ -269,6 +295,7 @@ int ctap_user_presence_test(uint32_t delay_ms)
     // The button first, so a press is never missed behind slower sources.
     const presence_source *sources[] = {
         &button_source,
+        &led_source,
 #ifdef CONFIG_TINYCRYPT_WATCH_BLE
         &ble_presence_source,
 #endif
@@ -469,6 +496,11 @@ void app_main(void)
     if (!nvs_read("rk", rk_store, sizeof(rk_store)))
         ctap_reset_rk();
 
+    led_status_start();
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+    led_status_set(LED_CONNECTING, true);
+#endif
+
     // No radio is on, so use the ADC noise source for esp_fill_random().
     // Must be disabled again before Wi-Fi/BLE or the ADC are used.
     bootloader_random_enable();
@@ -487,6 +519,8 @@ void app_main(void)
     {
         ESP_LOGW(TAG, "no radio started: ADC entropy back on");
         bootloader_random_enable();
+        led_status_set(LED_CONNECTING, false);
+        led_status_set(LED_FAULT, true);
     }
 #endif
 

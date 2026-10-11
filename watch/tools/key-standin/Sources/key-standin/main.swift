@@ -83,7 +83,10 @@ final class Standin: NSObject, CBPeripheralManagerDelegate {
         var nonce = Data(count: PresenceProtocol.nonceLength)
         let rc = nonce.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, PresenceProtocol.nonceLength, $0.baseAddress!) }
         precondition(rc == errSecSuccess, "SecRandomCopyBytes failed")
-        challenge = PresenceProtocol.domainTag + nonce
+        // No real CTAP request here: a random stand-in for the request hash.
+        var request = Data(count: PresenceProtocol.requestHashLength)
+        _ = request.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, PresenceProtocol.requestHashLength, $0.baseAddress!) }
+        challenge = PresenceProtocol.domainTag + nonce + request
         armedAt = .now
         log("armed nonce \(hex(nonce).prefix(16))…")
     }
