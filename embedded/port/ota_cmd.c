@@ -135,7 +135,7 @@ static void make_update(ota_cmd *out, const char *url, const char *version, cons
     memcpy(out->sha256, sha256, OTA_SHA256_LEN);
 }
 
-static void chunk(ota_chunks *chunks, const cJSON *root, ota_cmd *out)
+static void chunk(ota_chunks *chunks, const cJSON *root, uint32_t now_ms, ota_cmd *out)
 {
     const cJSON *index = cJSON_GetObjectItemCaseSensitive(root, "chunk_index");
     const cJSON *total = cJSON_GetObjectItemCaseSensitive(root, "total_chunks");
@@ -147,12 +147,21 @@ static void chunk(ota_chunks *chunks, const cJSON *root, ota_cmd *out)
         total->valuedouble != (int)total->valuedouble || strlen(version) >= OTA_VERSION_MAX)
         return fail(out, true, "Invalid chunk parameters");
     int i = (int)index->valuedouble, n = (int)total->valuedouble;
-    // A chunk from a different update (count or version) starts again.
+    // A chunk from a different update (count or version) starts again (a stale set is already gone).
     if (chunks->total != n || strcmp(chunks->version, version) != 0)
     {
         ota_cmd_reset(chunks);
         chunks->total = n;
+        chunks->started_ms = now_ms;
         snprintf(chunks->version, sizeof(chunks->version), "%s", version);
+    }
+    // Capped as chunks arrive, so a set that can never make a URL can't hold memory meanwhile.
+    size_t data_len = strlen(data);
+    size_t replaced = chunks->chunk[i] ? strlen(chunks->chunk[i]) : 0;
+    if (chunks->stored - replaced + data_len >= OTA_URL_MAX)
+    {
+        ota_cmd_reset(chunks);
+        return fail(out, true, "Invalid firmware URL");
     }
     const char *hex = string_field(root, "sha256");
     if (hex != NULL)
@@ -162,28 +171,21 @@ static void chunk(ota_chunks *chunks, const cJSON *root, ota_cmd *out)
         chunks->have_sha256 = true;
     }
     free(chunks->chunk[i]);
+    chunks->stored -= replaced;
     chunks->chunk[i] = strdup(data);
     if (chunks->chunk[i] == NULL)
     {
         ota_cmd_reset(chunks);
         return fail(out, true, "Out of memory");
     }
+    chunks->stored += data_len;
 
     out->kind = OTA_CMD_CHUNK;
     out->chunk_index = i;
     out->total_chunks = n;
-    size_t len = 0;
     for (int k = 0; k < n; k++)
-    {
         if (chunks->chunk[k] == NULL)
             return;  // more to come
-        len += strlen(chunks->chunk[k]);
-    }
-    if (len >= sizeof(out->url))
-    {
-        ota_cmd_reset(chunks);
-        return fail(out, true, "Invalid firmware URL");
-    }
     // All here: assemble the URL in place, then check it like a single ota_update.
     out->url[0] = 0;
     for (int k = 0; k < n; k++)
@@ -204,9 +206,12 @@ static void chunk(ota_chunks *chunks, const cJSON *root, ota_cmd *out)
     ota_cmd_reset(chunks);
 }
 
-void ota_cmd_parse(ota_chunks *chunks, const char *json, size_t len, ota_cmd *out)
+void ota_cmd_parse(ota_chunks *chunks, const char *json, size_t len, uint32_t now_ms, ota_cmd *out)
 {
     memset(out, 0, sizeof(*out));
+    // A set that hasn't completed in time is freed by whatever comes next, chunk or not.
+    if (chunks->total && (uint32_t)(now_ms - chunks->started_ms) > OTA_CHUNKS_MAX_AGE_MS)
+        ota_cmd_reset(chunks);
     cJSON *root = cJSON_ParseWithLength(json, len);
     const char *command = root ? string_field(root, "command") : NULL;
     if (root == NULL || !cJSON_IsObject(root))
@@ -233,7 +238,7 @@ void ota_cmd_parse(ota_chunks *chunks, const char *json, size_t len, ota_cmd *ou
             make_update(out, string_field(root, "url"), string_field(root, "version"), hex ? sha : NULL);
     }
     else if (strcmp(command, "url_chunk") == 0)
-        chunk(chunks, root, out);
+        chunk(chunks, root, now_ms, out);
     else
     {
         char message[sizeof(out->message)];

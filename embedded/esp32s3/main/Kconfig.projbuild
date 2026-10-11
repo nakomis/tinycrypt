@@ -41,4 +41,13 @@ config TINYCRYPT_OTA_FAIL_SELFTEST
         An image built with this fails its self-test after an update, so the bootloader rolls back
         to the previous one, which reports "rolled back" to Fleet. Never publish one for real use.
 
+config TINYCRYPT_OTA_DOWNLOAD_DEADLINE_S
+    int "Longest an update's download may take (seconds)"
+    default 300
+    range 10 900
+    help
+        BLE is paused while an update downloads, so the watch can't approve a sign-in meanwhile:
+        a download that takes longer than this is abandoned (CRYPT-21). A 1.2 MB image takes well
+        under a minute. Lower only to test it; publish-ota.sh refuses below 120.
+
 endmenu

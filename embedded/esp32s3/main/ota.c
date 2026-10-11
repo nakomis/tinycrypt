@@ -67,6 +67,13 @@ static uint8_t last_url_hash[32];
 static uint8_t approval_hash[32];
 static char approval_label[OTA_LABEL_MAX];
 
+// Limits on how often an update may run (CRYPT-21; ota.h). Written by the OTA task, read by the
+// MQTT task, both under the lock. Times are esp_timer milliseconds.
+static int64_t retry_after_ms;  // no update starts before this (back-off, or the gap after a prompt)
+static uint32_t backoff_s;  // the last back-off; 0 once a download passes every check
+static uint8_t declined_hash[32];  // the approval hash of the last image not approved
+static int64_t declined_until_ms;
+
 static nvs_handle_t nvs;
 static bool nvs_ok;
 static volatile bool on_probation;  // a new image that hasn't yet passed its self-test
@@ -75,6 +82,16 @@ static esp_timer_handle_t verify_deadline;
 static const char *running_version(void)
 {
     return esp_app_get_description()->version;
+}
+
+static int64_t now_ms(void)
+{
+    return esp_timer_get_time() / 1000;
+}
+
+static unsigned seconds_until(int64_t when_ms)
+{
+    return (unsigned)((when_ms - now_ms() + 999) / 1000);
 }
 
 // ---- responses ----------------------------------------------------------------
@@ -229,6 +246,7 @@ static void log_heap(const char *when)
 static const char *download(const esp_partition_t *slot, char *why, size_t why_len)
 {
     const char *err_text = NULL;
+    int64_t started = now_ms();  // the deadline includes connecting
     uint8_t *buf = malloc(READ_CHUNK);
     esp_http_client_config_t config = {
         .url = job_url,
@@ -282,12 +300,34 @@ static const char *download(const esp_partition_t *slot, char *why, size_t why_l
     size_t total = 0;
     int last_tenth = -1;
     int stalls = 0;
+    // Each read waits at most HTTP_TIMEOUT_MS; these catch a server that trickles bytes instead.
+    int64_t window_start = now_ms();
+    size_t window_total = 0;
     for (;;)
     {
         if (cancel)
         {
             err_text = "cancelled";
             goto out;
+        }
+        int64_t now = now_ms();
+        if (now - started > OTA_DOWNLOAD_DEADLINE_MS)
+        {
+            snprintf(why, why_len, "download failed: over %d s", CONFIG_TINYCRYPT_OTA_DOWNLOAD_DEADLINE_S);
+            err_text = why;
+            goto out;
+        }
+        if (now - window_start >= OTA_MIN_RATE_WINDOW_MS)
+        {
+            if (total - window_total < OTA_MIN_RATE_BYTES)
+            {
+                snprintf(why, why_len, "download failed: too slow (%u bytes in %d s)",
+                         (unsigned)(total - window_total), OTA_MIN_RATE_WINDOW_MS / 1000);
+                err_text = why;
+                goto out;
+            }
+            window_start = now;
+            window_total = total;
         }
         int n = esp_http_client_read(http, (char *)buf, READ_CHUNK);
         if (n == -ESP_ERR_HTTP_EAGAIN && ++stalls <= 3)
@@ -360,6 +400,8 @@ static const char *download(const esp_partition_t *slot, char *why, size_t why_l
         err_text = "running version unknown";  // so no downgrade check is possible
     else if (ota_version_cmp(job_version, running_version()) < 0)
         err_text = "downgrade refused";
+    else if (ota_version_cmp(job_version, running_version()) == 0)
+        err_text = "already running";
     else
         job_size = total;
 
@@ -435,6 +477,18 @@ static void ota_task(void *arg)
         if (ble_paused)
             ble_presence_resume();
 #endif
+        taskENTER_CRITICAL(&lock);
+        if (failed != NULL)
+        {
+            // Every failure here erased the spare slot, a cancel included: back off.
+            backoff_s = backoff_s == 0 ? OTA_BACKOFF_FIRST_S
+                        : backoff_s >= OTA_BACKOFF_MAX_S / 2 ? OTA_BACKOFF_MAX_S
+                                                              : backoff_s * 2;
+            retry_after_ms = now_ms() + (int64_t)backoff_s * 1000;
+        }
+        else
+            backoff_s = 0;
+        taskEXIT_CRITICAL(&lock);
         if (failed != NULL)
         {
             if (strcmp(failed, "cancelled") == 0)
@@ -482,6 +536,15 @@ static void ota_task(void *arg)
         // A cancel wins, even over an approval that raced it.
         if (approval_result != 1 || cancelled)
         {
+            // Not this image again for a while, and no image at all for a minute: each prompt
+            // blocks sign-ins and buzzes the watch.
+            taskENTER_CRITICAL(&lock);
+            memcpy(declined_hash, approval_hash, sizeof(declined_hash));
+            declined_until_ms = now_ms() + (int64_t)OTA_DECLINED_COOLDOWN_S * 1000;
+            int64_t gap = now_ms() + (int64_t)OTA_PROMPT_GAP_S * 1000;
+            if (gap > retry_after_ms)
+                retry_after_ms = gap;
+            taskEXIT_CRITICAL(&lock);
             respond_error("ota_error", cancelled ? "rejected" : "approval timed out", job_version);
             finish();
             continue;
@@ -538,6 +601,10 @@ static void start_update(const ota_cmd *cmd)
     }
     // IoT Core redelivers a command whose PUBACK was slow (the MQTT task is starved while a download
     // runs), during the update or after it has failed: the same URL again is that, not a new request.
+    // No reply, on purpose: the redelivery usually lands during the very download it started, and an
+    // ota_error carrying that version would show Fleet the update as failed while it's running. The
+    // first delivery has had its answer; every trigger from Fleet presigns a new URL, so a real retry
+    // never looks like this.
     uint8_t url_hash[32];
     mbedtls_sha256((const unsigned char *)url, strlen(url), url_hash, 0);
     if (memcmp(url_hash, last_url_hash, sizeof(url_hash)) == 0)
@@ -546,18 +613,40 @@ static void start_update(const ota_cmd *cmd)
         free(url);
         return;
     }
+    // Refused before downloading when the answer can only be no: saves erasing the slot and pausing BLE.
+    if (ota_version_valid(running_version()) && ota_version_cmp(cmd->version, running_version()) <= 0)
+    {
+        free(url);
+        respond_error("ota_error", ota_version_cmp(cmd->version, running_version()) == 0 ? "already running" : "downgrade refused",
+                      cmd->version);
+        return;
+    }
+    uint8_t hash[32];
+    ota_approval_hash(cmd->sha256, cmd->version, hash);
+    int64_t now = now_ms(), backoff_until = 0, declined_until = 0;
     taskENTER_CRITICAL(&lock);
     bool busy = phase != IDLE;
-    if (!busy)
+    if (!busy && now < retry_after_ms)
+        backoff_until = retry_after_ms;
+    else if (!busy && now < declined_until_ms && memcmp(hash, declined_hash, sizeof(hash)) == 0)
+        declined_until = declined_until_ms;
+    else if (!busy)
     {
         phase = DOWNLOADING;
         cancel = false;
     }
     taskEXIT_CRITICAL(&lock);
-    if (busy)
+    if (busy || backoff_until || declined_until)
     {
+        char why[48];
+        if (busy)
+            snprintf(why, sizeof(why), "busy");
+        else if (backoff_until)
+            snprintf(why, sizeof(why), "busy: retry in %u s", seconds_until(backoff_until));
+        else
+            snprintf(why, sizeof(why), "declined recently: retry in %u s", seconds_until(declined_until));
         free(url);
-        respond_error("ota_error", "busy", cmd->version);
+        respond_error("ota_error", why, cmd->version);
         return;
     }
     memcpy(last_url_hash, url_hash, sizeof(last_url_hash));
@@ -595,7 +684,7 @@ void ota_handle_command(const char *data, size_t len)
 {
     static ota_chunks chunks;
     static ota_cmd cmd;  // 8 KB: not on the MQTT task's stack
-    ota_cmd_parse(&chunks, data, len, &cmd);
+    ota_cmd_parse(&chunks, data, len, (uint32_t)(esp_timer_get_time() / 1000), &cmd);
     switch (cmd.kind)
     {
     case OTA_CMD_GET_VERSION:

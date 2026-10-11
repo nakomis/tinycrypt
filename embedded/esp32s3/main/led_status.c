@@ -93,6 +93,8 @@ static rgb_t frame(int64_t ms, uint32_t on, bool flashing, led_flash_t kind, int
         return (ms / 60) % 2 ? WHITE : OFF;  // fast flicker: blue and cyan look alike when dim
     if (on & (1u << LED_PRESENCE))
         return scale(BLUE, 40 + pulse(ms, 1200) * 215 / 255);
+    if (on & (1u << LED_UPDATE))
+        return scale(AMBER, 40 + pulse(ms, 1200) * 215 / 255);  // not offline's: that's a short blink
     if (on & (1u << LED_ENROL_OPEN))
         return scale(MAGENTA, 40 + pulse(ms, 1600) * 215 / 255);
     if (on & (1u << LED_FAULT))

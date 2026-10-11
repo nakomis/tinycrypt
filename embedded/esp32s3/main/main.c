@@ -237,20 +237,23 @@ static void report_result(void *ctx, int result)
 
 static const presence_source button_source = {"button", NULL, button_arm, button_approved, report_result};
 
-// The status LED as a source: blue while waiting, then green or red for the result.
+// The status LED as a source: blue while a sign-in waits, amber for an update (an external wait,
+// the only kind with a label), then green or red for the result.
 static uint32_t led_wait_started;
+static led_state_t led_waiting;
 
 static void led_arm(void *ctx)
 {
     (void)ctx;
     led_wait_started = millis();
-    led_status_set(LED_PRESENCE, true);
+    led_waiting = presence_request_label()[0] ? LED_UPDATE : LED_PRESENCE;
+    led_status_set(led_waiting, true);
 }
 
 static void led_disarm(void *ctx, int result)
 {
     (void)ctx;
-    led_status_set(LED_PRESENCE, false);
+    led_status_set(led_waiting, false);
     led_status_set(LED_WATCH_SIGNING, false);
     // U2F re-asks every 750 ms, each a short wait ending unapproved: flash red only when the user
     // action is really over (cancelled, or a full-length wait that timed out).

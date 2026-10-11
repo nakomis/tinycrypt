@@ -21,7 +21,7 @@ export AWS_PROFILE=${AWS_PROFILE:-nakom.is-sandbox}
 export AWS_REGION=${AWS_REGION:-eu-west-2}
 IDF_PATH="${IDF_PATH:-$HOME/esp/v5.5/esp-idf}"
 # shellcheck disable=SC1091
-. "$IDF_PATH/export.sh" > /dev/null 2>&1   # for esptool
+. "$IDF_PATH/export.sh" > /dev/null 2>&1   # for esptool and espsecure
 bucket="nakomis-firmware-${env}"
 object="tinycrypt/${version}/firmware.bin"
 
@@ -74,6 +74,14 @@ if grep -q '^#define CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST 1$' "$config" && ! $test
     echo "this build fails its self-test on purpose (CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST): not publishing" >&2
     exit 1
 fi
+# A short download deadline is only for testing it (CRYPT-21): published, it would fail real updates.
+deadline=$(awk '/^#define CONFIG_TINYCRYPT_OTA_DOWNLOAD_DEADLINE_S / { print $3 }' "$config")
+[ "${deadline:-0}" -ge 120 ] || { echo "the download deadline is ${deadline:-unset} s (< 120): not publishing" >&2; exit 1; }
+# Signed by this environment's key, or every key in the field refuses it.
+espsecure.py verify_signature --version 2 --keyfile "$here/ota-signing/${env}.pub.pem" "$bin" > /dev/null 2>&1 || {
+    echo "the image isn't signed by the $env key (ota-signing/${env}.pub.pem): not publishing" >&2
+    exit 1
+}
 
 # No secrets or per-key settings in a published image (they live in the prov partition): no Thing
 # name, endpoint or Wi-Fi SSID, and no line of any provisioned key's certificate or private key.

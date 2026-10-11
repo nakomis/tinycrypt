@@ -7,7 +7,9 @@
 # Writes the bootloader, partition table, OTA data and the (signed, see build.sh) app, plus the
 # key's prov partition from certs/<thing>/prov.bin (provision-key.sh; the only one there if no thing
 # is named). Never the nvs partition: the sign counter, resident keys and enrolled watch survive.
-# Writing OTA data boots ota_0, whichever slot an update had moved to.
+# Writing OTA data boots ota_0, whichever slot an update had moved to. The app must be signed by
+# this environment's key (ota-signing/{env}.pub.pem, env from NPM_ENVIRONMENT, default sandbox): one
+# signed by another would boot, then refuse every update from Fleet.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 cd "$here/build"
@@ -15,8 +17,9 @@ IDF_PATH="${IDF_PATH:-$HOME/esp/v5.5/esp-idf}"
 # shellcheck disable=SC1091
 . "$IDF_PATH/export.sh" > /dev/null
 
-espsecure.py signature_info_v2 tinycrypt.bin > /dev/null 2>&1 || {
-    echo "build/tinycrypt.bin isn't signed: run build.sh" >&2
+env=${NPM_ENVIRONMENT:-sandbox}
+espsecure.py verify_signature --version 2 --keyfile "$here/ota-signing/${env}.pub.pem" tinycrypt.bin > /dev/null 2>&1 || {
+    echo "build/tinycrypt.bin isn't signed by the $env key (ota-signing/${env}.pub.pem): run build.sh" >&2
     exit 1
 }
 
