@@ -18,6 +18,9 @@ test_rollback=false
 env=${NPM_ENVIRONMENT:-sandbox}
 export AWS_PROFILE=${AWS_PROFILE:-nakom.is-sandbox}
 export AWS_REGION=${AWS_REGION:-eu-west-2}
+IDF_PATH="${IDF_PATH:-$HOME/esp/v5.5/esp-idf}"
+# shellcheck disable=SC1091
+. "$IDF_PATH/export.sh" > /dev/null 2>&1   # for esptool
 bucket="nakomis-firmware-${env}"
 object="tinycrypt/${version}/firmware.bin"
 
@@ -32,8 +35,12 @@ if aws s3api head-object --bucket "$bucket" --key "$object" > /dev/null 2>&1; th
     exit 1
 fi
 
+# Reconfigure first: IDF reads version.txt at configure time, not on every build.
+"$here/build.sh" reconfigure > /dev/null
 "$here/build.sh"
 bin="$here/build/tinycrypt.bin"
+built=$(python -m esptool --chip esp32s3 image_info --version 2 "$bin" 2> /dev/null | awk -F': *' '/^App version/ { print $2 }')
+[ "$built" = "$version" ] || { echo "the image says version '$built', not $version" >&2; exit 1; }
 
 if grep -q '^CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST=y' "$here/sdkconfig" && ! $test_rollback; then
     echo "this build fails its self-test on purpose (CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST): not publishing" >&2
