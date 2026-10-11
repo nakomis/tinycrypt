@@ -35,3 +35,10 @@ extern const presence_source ble_presence_source;
 void ble_presence_open_enrol(uint32_t seconds);
 
 bool ble_presence_enrolled(void);
+
+// CRYPT-14: stops NimBLE and the controller to free their RAM while an update downloads (a second
+// TLS session needs a contiguous ~17 KB record buffer, on a module with no PSRAM). The button keeps
+// working; the watch can't approve until ble_presence_resume(). Returns true if BLE was running
+// and is now paused (call resume afterwards). Not during a presence wait.
+bool ble_presence_suspend(void);
+void ble_presence_resume(void);

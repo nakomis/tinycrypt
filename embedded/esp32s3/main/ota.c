@@ -2,6 +2,10 @@
 #include "ota.h"
 #include "notifier.h"
 #include "presence.h"
+#include "sdkconfig.h"
+#ifdef CONFIG_TINYCRYPT_WATCH_BLE
+#include "ble_presence.h"
+#endif
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -375,7 +379,15 @@ static void ota_task(void *arg)
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
         ESP_LOGI(TAG, "update to %s: downloading into %s", job_version, slot ? slot->label : "(none)");
+#ifdef CONFIG_TINYCRYPT_WATCH_BLE
+        // The download needs RAM that BLE holds; the watch has nothing to do until the approval.
+        bool ble_paused = ble_presence_suspend();
+#endif
         const char *failed = slot ? download(slot, why, sizeof(why)) : "no update slot";
+#ifdef CONFIG_TINYCRYPT_WATCH_BLE
+        if (ble_paused)
+            ble_presence_resume();
+#endif
         if (failed != NULL)
         {
             if (strcmp(failed, "cancelled") == 0)
