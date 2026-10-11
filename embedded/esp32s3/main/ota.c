@@ -198,6 +198,9 @@ static const char *download(const esp_partition_t *slot, char *why, size_t why_l
         .cert_pem = root_ca_start,
         .timeout_ms = HTTP_TIMEOUT_MS,
         .keep_alive_enable = false,
+        // The request line carries the whole presigned URL (~1.5-3 KB with an STS token); the
+        // default 512-byte TX buffer can't hold it, and the request fails with a bare ESP_FAIL.
+        .buffer_size_tx = (int)strlen(job_url) + 1024,
     };
     esp_http_client_handle_t http = buf ? esp_http_client_init(&config) : NULL;
     esp_ota_handle_t ota = 0;
@@ -444,7 +447,12 @@ static void start_update(const ota_cmd *cmd)
     if (busy)
     {
         free(url);
-        respond_error("ota_error", "busy", cmd->version);
+        // IoT Core redelivers a command whose PUBACK was slow (the MQTT task is starved while a
+        // download runs): the same update again is that, not a second request.
+        if (strcmp(cmd->version, job_version) == 0 && memcmp(cmd->sha256, job_sha256, sizeof(job_sha256)) == 0)
+            ESP_LOGI(TAG, "update to %s again: already under way", cmd->version);
+        else
+            respond_error("ota_error", "busy", cmd->version);
         return;
     }
     job_url = url;
