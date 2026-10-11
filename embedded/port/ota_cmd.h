@@ -21,6 +21,7 @@
 #define OTA_VERSION_MAX 16  // "x.y.z", each part at most 4 digits
 #define OTA_SHA256_LEN 32
 #define OTA_LABEL_MAX 64
+#define OTA_CHUNKS_MAX_AGE_MS 60000  // a set that hasn't completed by then is dropped (CRYPT-21)
 
 typedef enum
 {
@@ -51,12 +52,15 @@ typedef struct
     bool have_sha256;
     uint8_t sha256[OTA_SHA256_LEN];
     char *chunk[OTA_MAX_CHUNKS];  // malloc'd
+    size_t stored;  // the chunks' total length: never reaches OTA_URL_MAX (CRYPT-21)
+    uint32_t started_ms;  // when the set's first chunk came
 } ota_chunks;
 
 void ota_cmd_reset(ota_chunks *chunks);
 
-// Parses one command. `out` is large (the URL), so keep it static or on the heap.
-void ota_cmd_parse(ota_chunks *chunks, const char *json, size_t len, ota_cmd *out);
+// Parses one command. `out` is large (the URL), so keep it static or on the heap. `now_ms` is any
+// millisecond clock (it may wrap): a chunk set older than OTA_CHUNKS_MAX_AGE_MS is dropped.
+void ota_cmd_parse(ota_chunks *chunks, const char *json, size_t len, uint32_t now_ms, ota_cmd *out);
 
 // "x.y.z": three dot-separated runs of 1-4 decimal digits, nothing else (it's shown on the watch).
 bool ota_version_valid(const char *v);

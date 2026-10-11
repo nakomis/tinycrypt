@@ -174,3 +174,40 @@ def test_approval_hash_is_domain_separated_and_bound_to_image_and_version():
     assert hash_ == hashlib.sha256(b"tinycrypt-ota-v1" + image + b"1.2.3").hexdigest()
     assert label == "Install tinycrypt 1.2.3?"
     assert tool("--approval", image.hex(), "1.2.4")[0] != hash_
+
+
+# CRYPT-21: a chunk set is capped as it arrives and expires.
+
+def test_an_oversize_chunk_set_is_refused_as_it_arrives():
+    big = {"command": "url_chunk", "total_chunks": 3, "version": "1.2.3", "chunk_data": "A" * 5000}
+    out = run({**big, "chunk_index": 0}, {**big, "chunk_index": 1})
+    assert out == [{"kind": "chunk", "index": 0, "total": 3},
+                   {"kind": "error", "ota_error": True, "message": "Invalid firmware URL"}]
+
+
+def test_resending_a_chunk_replaces_it_in_the_cap():
+    # The same ~3.5 KB chunk three times counts once, not three times.
+    msgs = chunks(URL + "&X-Amz-Security-Token=" + "a" * 7000, 2)
+    out = run(msgs[0], msgs[0], msgs[0], msgs[1])
+    assert out[-1]["kind"] == "update"
+
+
+def test_a_url_of_exactly_the_limit_is_refused():
+    url = "https://" + "a" * (8192 - 8)
+    assert run(*chunks(url, 2))[-1] == {"kind": "error", "ota_error": True, "message": "Invalid firmware URL"}
+
+
+@pytest.mark.parametrize("start", [0, 2**32 - 30000])  # and across the clock wrapping
+def test_a_set_completes_within_a_minute(start):
+    msgs = chunks(URL, 2)
+    out = run({"_now": start}, msgs[0], {"_now": (start + 60000) % 2**32}, msgs[1])
+    assert out[-1]["kind"] == "update"
+
+
+@pytest.mark.parametrize("start", [0, 2**32 - 30000])
+def test_a_stale_set_is_dropped_and_a_fresh_one_completes(start):
+    msgs = chunks(URL, 2)
+    later = (start + 60001) % 2**32
+    out = run({"_now": start}, msgs[0], {"_now": later}, msgs[1], msgs[0])
+    # msgs[1] found the set stale and started a new one; msgs[0] then completed it.
+    assert [o["kind"] for o in out] == ["chunk", "chunk", "update"]

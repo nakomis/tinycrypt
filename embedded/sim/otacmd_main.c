@@ -2,9 +2,12 @@
 // the tests can feed it commands (CRYPT-14).
 //
 //   tinycrypt-otacmd                        one JSON command per line on stdin; one JSON result per line
+//                                           ({"_now": ms} sets the parser's clock, with no result)
 //   tinycrypt-otacmd --valid <version>      prints 1 or 0
 //   tinycrypt-otacmd --cmp <a> <b>          prints -1, 0 or 1
 //   tinycrypt-otacmd --approval <sha256 hex> <version>   prints the approval hash and label
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -74,9 +77,18 @@ int main(int argc, char *argv[])
     static ota_chunks chunks;
     static ota_cmd cmd;
     static char line[64 * 1024];
+    uint32_t now_ms = 0;
     while (fgets(line, sizeof(line), stdin) != NULL)
     {
-        ota_cmd_parse(&chunks, line, strlen(line), &cmd);
+        cJSON *clock = cJSON_Parse(line);
+        const cJSON *now = clock ? cJSON_GetObjectItemCaseSensitive(clock, "_now") : NULL;
+        bool set_clock = cJSON_IsNumber(now);
+        if (set_clock)
+            now_ms = (uint32_t)now->valuedouble;
+        cJSON_Delete(clock);
+        if (set_clock)
+            continue;
+        ota_cmd_parse(&chunks, line, strlen(line), now_ms, &cmd);
         cJSON *out = cJSON_CreateObject();
         cJSON_AddStringToObject(out, "kind", kind_name(cmd.kind));
         if (cmd.kind == OTA_CMD_UPDATE)

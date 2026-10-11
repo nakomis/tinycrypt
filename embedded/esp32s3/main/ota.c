@@ -595,7 +595,7 @@ void ota_handle_command(const char *data, size_t len)
 {
     static ota_chunks chunks;
     static ota_cmd cmd;  // 8 KB: not on the MQTT task's stack
-    ota_cmd_parse(&chunks, data, len, &cmd);
+    ota_cmd_parse(&chunks, data, len, (uint32_t)(esp_timer_get_time() / 1000), &cmd);
     switch (cmd.kind)
     {
     case OTA_CMD_GET_VERSION:
