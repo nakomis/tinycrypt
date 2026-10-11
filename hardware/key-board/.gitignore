@@ -1,0 +1,11 @@
+.venv/
+.pytest_cache/
+__pycache__/
+out/tmp/
+out/*/gerbers/
+*.dsn
+*.ses
+*.kicad_prl
+# Freerouting 2.5.0 (64 MB): copy it in, see README.md
+freerouting/
+!tests/data/*.ses

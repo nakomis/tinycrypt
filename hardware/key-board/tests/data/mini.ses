@@ -1,0 +1,4 @@
+(session mini (routes (resolution um 10) (parser (string_quote ") (space_in_quoted_tokens on))
+  (network_out (net GND
+    (wire (path F.Cu 1500 1000000 -1000000 1100000 -1000000 1100000 -1050000))
+    (via "Via[0-3]_600:300_um" 1100000 -1050000)))))
