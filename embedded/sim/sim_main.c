@@ -49,6 +49,7 @@ static uint32_t up_timeout_ms = 0;  // 0: the core's own timeout
 // startup, once the loop is idle, and is cancelled from another thread external_cancel_ms into it.
 static uint32_t external_at_ms = 0;
 static uint32_t external_cancel_ms = 0;
+static bool external_cancel_first = false;  // cancelled before the wait even starts
 static char state_path[1024];
 static char rk_path[1024];
 static char counter_path[1024];
@@ -268,6 +269,11 @@ static void run_external_wait(void)
         pthread_create(&t, NULL, cancel_later, NULL);
         pthread_detach(t);
     }
+    if (external_cancel_first)
+    {
+        fprintf(stderr, ">>> cancelling the external wait before it starts\n");
+        presence_cancel_external();
+    }
     fprintf(stderr, ">>> external wait\n");
     uint32_t timeout = up_timeout_ms ? up_timeout_ms : 10000;
     int result;
@@ -414,7 +420,7 @@ static void usage(const char *argv0)
 {
     fprintf(stderr,
             "usage: %s [--port N] [--state-dir DIR] [--presence auto|deny|prompt|button+watch]\n"
-            "          [--watch-after MS] [--up-timeout MS] [--external-at MS [--external-cancel MS]]\n",
+            "          [--watch-after MS] [--up-timeout MS] [--external-at MS [--external-cancel MS | --external-cancel-first]]\n",
             argv0);
     exit(2);
 }
@@ -432,10 +438,11 @@ int main(int argc, char *argv[])
         {"up-timeout", required_argument, NULL, 't'},
         {"external-at", required_argument, NULL, 'x'},
         {"external-cancel", required_argument, NULL, 'c'},
+        {"external-cancel-first", no_argument, NULL, 'f'},
         {NULL, 0, NULL, 0},
     };
     int c;
-    while ((c = getopt_long(argc, argv, "p:s:u:w:t:x:c:", opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "p:s:u:w:t:x:c:f", opts, NULL)) != -1)
     {
         switch (c)
         {
@@ -468,6 +475,9 @@ int main(int argc, char *argv[])
             break;
         case 'c':
             external_cancel_ms = (uint32_t)atoi(optarg);
+            break;
+        case 'f':
+            external_cancel_first = true;
             break;
         default:
             usage(argv[0]);

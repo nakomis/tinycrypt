@@ -21,6 +21,7 @@
 #include "driver/gpio.h"
 #include "esp_core_dump.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -553,13 +554,19 @@ void app_main(void)
     snprintf(serial_string, sizeof(serial_string), "0001-rr%d", (int)esp_reset_reason());
     report_last_crash();
 
+    // Never erase NVS to get past an error: it holds the sign counter, resident keys and the enrolled
+    // watch. A new image from an update that can't read it rolls back (CRYPT-14); otherwise stop
+    // here, and erase by hand (idf.py erase-flash) only if that's really meant.
     esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    if (err != ESP_OK)
     {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
+        ESP_LOGE(TAG, "NVS unusable (%s): not erasing it", esp_err_to_name(err));
+        esp_ota_img_states_t state;
+        if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &state) == ESP_OK &&
+            state == ESP_OTA_IMG_PENDING_VERIFY)
+            esp_ota_mark_app_invalid_rollback_and_reboot();
+        abort();
     }
-    ESP_ERROR_CHECK(err);
     ESP_ERROR_CHECK(nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs));
     if (!nvs_read("rk", rk_store, sizeof(rk_store)))
         ctap_reset_rk();

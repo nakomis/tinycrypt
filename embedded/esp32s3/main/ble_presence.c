@@ -558,28 +558,35 @@ static bool bring_up(void)
     return true;
 }
 
-bool ble_presence_suspend(void)
+int ble_presence_suspend(void)
 {
     if (!running)
-        return false;
+        return 0;
+    taskENTER_CRITICAL(&lock);
+    bool busy = waiting;
+    taskEXIT_CRITICAL(&lock);
+    if (busy)
+        return -1;  // a presence wait may still be approved over BLE
+    // The connection-limit timers first, so none fires into a host that's going away.
+    for (int i = 0; i < SLOTS; i++)
+        if (slot_timer[i] != NULL)
+            esp_timer_stop(slot_timer[i]);
     int rc = nimble_port_stop();  // ends nimble_port_run(), so the host task deletes itself
     if (rc != 0)
     {
         ESP_LOGE(TAG, "nimble_port_stop failed (%d): BLE left running", rc);
-        return false;
+        return 0;
     }
     nimble_port_deinit();  // the host and the controller
     running = false;
     for (int i = 0; i < SLOTS; i++)
     {
         allowed_conn[i] = NO_CONN;
-        if (slot_timer[i] != NULL)
-            esp_timer_stop(slot_timer[i]);
         slot_conn[i] = NO_CONN;
     }
     led_status_set(LED_WATCH_SIGNING, false);
     ESP_LOGI(TAG, "BLE paused");
-    return true;
+    return 1;
 }
 
 void ble_presence_resume(void)

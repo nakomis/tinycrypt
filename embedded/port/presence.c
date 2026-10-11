@@ -35,7 +35,6 @@ static uint8_t last_hash[PRESENCE_REQUEST_HASH_LEN];
 // wait has no requesting channel (its CID is all zeros, which no channel is ever given).
 static uint8_t request_cid[CID_LEN];
 static bool external;
-static volatile bool external_running;
 static volatile bool cancel_external;
 static bool new_action;
 static bool cancelled;
@@ -82,8 +81,12 @@ const char *presence_request_label(void)
 
 void presence_cancel_external(void)
 {
-    if (external_running)
-        cancel_external = true;
+    cancel_external = true;
+}
+
+void presence_clear_external_cancel(void)
+{
+    cancel_external = false;
 }
 
 static bool is_init_packet(const uint8_t *report)
@@ -355,10 +358,7 @@ int presence_wait_external(uint32_t timeout_ms, const uint8_t hash[PRESENCE_REQU
         request_label[n] = label[n] >= 0x20 && label[n] < 0x7f ? label[n] : '?';
     request_label[n] = 0;
     request_bound = true;
-    cancel_external = false;
-    external_running = true;
     int result = wait(timeout_ms, sources, n_sources, io);
-    external_running = false;
     cancel_external = false;
     external = false;
     request_bound = false;

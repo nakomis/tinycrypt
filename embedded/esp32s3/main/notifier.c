@@ -148,7 +148,10 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         ESP_LOGW(TAG, "MQTT disconnected");
         break;
     case MQTT_EVENT_SUBSCRIBED:
-        if (event->msg_id == subscribe_msg_id)
+        // A SUBACK can refuse (0x80): then the key can't take updates, and a new image isn't kept.
+        if (event->msg_id == subscribe_msg_id && event->error_handle->error_type == MQTT_ERROR_TYPE_SUBSCRIBE_FAILED)
+            ESP_LOGE(TAG, "subscription to %s refused", commands_topic);
+        else if (event->msg_id == subscribe_msg_id)
         {
             ESP_LOGI(TAG, "listening for Fleet on %s", commands_topic);
             ota_on_connected();

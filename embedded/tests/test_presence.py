@@ -439,3 +439,13 @@ def test_external_wait_has_no_owner_every_channel_is_busy(raw):
     lines = [line for line in sim.log if ">>> request " in line]
     assert len([line for line in sim.log if line.startswith(">>> label ")]) == 1
     assert lines[-1].startswith(">>> request bound rp=example.com hash=") and lines[-1].split("hash=")[1] != lines[0].split("hash=")[1]
+
+
+def test_external_wait_cancelled_before_it_starts(raw):
+    # A cancel that lands after the wait was handed out but before it began must still end it
+    # (CRYPT-14 review): the update would otherwise go on to a full approval wait, and install.
+    sim, _ = raw("--watch-after", "300", "--up-timeout", "10000", "--external-at", "300", "--external-cancel-first")
+    start = time.time()
+    assert wait_for_log(sim, ">>> external result").endswith("result 0")
+    assert time.time() - start < 3
+    assert not [line for line in sim.log if "watch approved" in line]

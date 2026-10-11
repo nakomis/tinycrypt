@@ -111,6 +111,9 @@ int presence_wait(uint32_t timeout_ms, const presence_source *const *sources, si
 int presence_wait_external(uint32_t timeout_ms, const uint8_t hash[PRESENCE_REQUEST_HASH_LEN], const char *label,
                            const presence_source *const *sources, size_t n_sources, const presence_io *io);
 
-// Ends a running external wait as cancelled (result 0). Safe from any task; does nothing to a CTAP
-// wait, or if no external wait is running.
+// Ends the external wait as cancelled (result 0). Safe from any task. Sticky: a cancel that comes
+// before the wait has started ends it as soon as it starts, so the caller must clear any stale one
+// (presence_clear_external_cancel) when it hands out the wait, before a cancel can be meant for it.
+// Never affects a CTAP wait.
 void presence_cancel_external(void);
+void presence_clear_external_cancel(void);

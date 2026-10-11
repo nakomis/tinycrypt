@@ -35,6 +35,7 @@ extern const char root_ca_start[] asm("_binary_AmazonRootCA1_pem_start");
 #define PROJECT "tinycrypt"
 #define NVS_NAMESPACE "ota"
 #define NVS_TARGET "target"  // the version an approved install restarted into
+#define NVS_TARGET_SLOT "target_slot"  // and its slot (a reinstall of the same version rolls back too)
 #define READ_CHUNK 4096
 #define HTTP_TIMEOUT_MS 15000
 #define RESTART_DELAY_MS 2000  // for "approved" to reach IoT Core first
@@ -59,6 +60,7 @@ static int approval_result;
 static char *job_url;
 static char job_version[OTA_VERSION_MAX];
 static uint8_t job_sha256[OTA_SHA256_LEN];
+static size_t job_size;  // bytes downloaded, for the re-hash before switching slots
 // SHA-256 of the last update command's URL. IoT Core redelivers the very same bytes; every trigger
 // from Fleet presigns a fresh URL. So the same URL again is a redelivery (or a replay), never a retry.
 static uint8_t last_url_hash[32];
@@ -132,6 +134,7 @@ static void verify_deadline_fire(void *arg)
         return;
     ESP_LOGE(TAG, "new image didn't reach IoT Core within %d s: rolling back", OTA_VERIFY_DEADLINE_S);
     esp_ota_mark_app_invalid_rollback_and_reboot();
+    abort();
 }
 
 void ota_boot(bool local_selftest_ok)
@@ -149,6 +152,7 @@ void ota_boot(bool local_selftest_ok)
     {
         ESP_LOGE(TAG, "new image failed its self-test: rolling back");
         esp_ota_mark_app_invalid_rollback_and_reboot();
+        abort();  // only if that failed: a reset of a pending image rolls back too
     }
 #ifdef CONFIG_TINYCRYPT_NOTIFIER
     // Kept only once it can be updated again (ota_on_connected).
@@ -159,6 +163,7 @@ void ota_boot(bool local_selftest_ok)
     {
         ESP_LOGE(TAG, "no probation timer: rolling back");
         esp_ota_mark_app_invalid_rollback_and_reboot();
+        abort();
     }
 #else
     esp_ota_mark_app_valid_cancel_rollback();
@@ -177,11 +182,12 @@ void ota_on_connected(void)
     respond_version();
 
     // The outcome of an install this key approved, reported once.
-    char target[OTA_VERSION_MAX];
-    size_t len = sizeof(target);
+    char target[OTA_VERSION_MAX], slot[17] = "";
+    size_t len = sizeof(target), slot_len = sizeof(slot);
     if (!nvs_ok || nvs_get_str(nvs, NVS_TARGET, target, &len) != ESP_OK)
         return;
-    if (strcmp(target, running_version()) == 0)
+    nvs_get_str(nvs, NVS_TARGET_SLOT, slot, &slot_len);
+    if (strcmp(target, running_version()) == 0 && strcmp(slot, esp_ota_get_running_partition()->label) == 0)
     {
         cJSON *msg = message("ota_complete");
         cJSON_AddStringToObject(msg, "version", target);
@@ -190,6 +196,7 @@ void ota_on_connected(void)
     else
         respond_error("ota_error", "rolled back", target);
     nvs_erase_key(nvs, NVS_TARGET);
+    nvs_erase_key(nvs, NVS_TARGET_SLOT);
     nvs_commit(nvs);
 }
 
@@ -347,8 +354,12 @@ static const char *download(const esp_partition_t *slot, char *why, size_t why_l
         err_text = "wrong image";
         goto out;
     }
-    if (ota_version_valid(running_version()) && ota_version_cmp(job_version, running_version()) < 0)
+    if (!ota_version_valid(running_version()))
+        err_text = "running version unknown";  // so no downgrade check is possible
+    else if (ota_version_cmp(job_version, running_version()) < 0)
         err_text = "downgrade refused";
+    else
+        job_size = total;
 
 out:
     if (ota)
@@ -360,14 +371,41 @@ out:
     return err_text;
 }
 
+// The job is cleared before the phase goes back to IDLE: from then on the MQTT task may start the
+// next one (start_update), which sets job_url itself.
 static void finish(void)
 {
+    char *url = job_url;
+    job_url = NULL;
+    free(url);
     taskENTER_CRITICAL(&lock);
     phase = IDLE;
     cancel = false;
     taskEXIT_CRITICAL(&lock);
-    free(job_url);
-    job_url = NULL;
+}
+
+// Hashes the slot's first `size` bytes again: what boots must be what was verified.
+static bool slot_matches(const esp_partition_t *slot, size_t size)
+{
+    uint8_t *buf = malloc(READ_CHUNK);
+    if (buf == NULL)
+        return false;
+    mbedtls_sha256_context sha;
+    mbedtls_sha256_init(&sha);
+    mbedtls_sha256_starts(&sha, 0);
+    bool ok = true;
+    for (size_t off = 0; ok && off < size; off += READ_CHUNK)
+    {
+        size_t n = size - off < READ_CHUNK ? size - off : READ_CHUNK;
+        ok = esp_partition_read(slot, off, buf, n) == ESP_OK;
+        if (ok)
+            mbedtls_sha256_update(&sha, buf, n);
+    }
+    uint8_t got[OTA_SHA256_LEN];
+    mbedtls_sha256_finish(&sha, got);
+    mbedtls_sha256_free(&sha);
+    free(buf);
+    return ok && memcmp(got, job_sha256, sizeof(got)) == 0;
 }
 
 static void ota_task(void *arg)
@@ -380,8 +418,15 @@ static void ota_task(void *arg)
         const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
         ESP_LOGI(TAG, "update to %s: downloading into %s", job_version, slot ? slot->label : "(none)");
 #ifdef CONFIG_TINYCRYPT_WATCH_BLE
-        // The download needs RAM that BLE holds; the watch has nothing to do until the approval.
-        bool ble_paused = ble_presence_suspend();
+        // The download needs RAM that BLE holds; the watch has nothing to do until the approval. Not
+        // in the middle of a sign-in, though: let its presence wait (at most ~30 s) finish first.
+        int ble = ble_presence_suspend();
+        for (int i = 0; ble < 0 && i < 600; i++)
+        {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            ble = ble_presence_suspend();
+        }
+        bool ble_paused = ble > 0;
 #endif
         const char *failed = slot ? download(slot, why, sizeof(why)) : "no update slot";
 #ifdef CONFIG_TINYCRYPT_WATCH_BLE
@@ -432,7 +477,8 @@ static void ota_task(void *arg)
         cancelled = cancel;
         phase = INSTALLING;
         taskEXIT_CRITICAL(&lock);
-        if (approval_result != 1)
+        // A cancel wins, even over an approval that raced it.
+        if (approval_result != 1 || cancelled)
         {
             respond_error("ota_error", cancelled ? "rejected" : "approval timed out", job_version);
             finish();
@@ -440,15 +486,27 @@ static void ota_task(void *arg)
         }
 
         ESP_LOGI(TAG, "%s approved: installing", job_version);
+        if (!slot_matches(slot, job_size))
+        {
+            respond_error("ota_error", "install failed: slot changed after verification", job_version);
+            finish();
+            continue;
+        }
         esp_err_t err = nvs_ok ? nvs_set_str(nvs, NVS_TARGET, job_version) : ESP_ERR_INVALID_STATE;
+        if (err == ESP_OK)
+            err = nvs_set_str(nvs, NVS_TARGET_SLOT, slot->label);
         if (err == ESP_OK)
             err = nvs_commit(nvs);
         if (err == ESP_OK)
-            err = esp_ota_set_boot_partition(slot);
+            err = esp_ota_set_boot_partition(slot);  // checks the image (and its signature) again
         if (err != ESP_OK)
         {
             if (nvs_ok)
+            {
                 nvs_erase_key(nvs, NVS_TARGET);
+                nvs_erase_key(nvs, NVS_TARGET_SLOT);
+                nvs_commit(nvs);
+            }
             respond_error("ota_error", "install failed", job_version);
             finish();
             continue;
@@ -579,7 +637,12 @@ bool ota_take_approval(uint8_t hash[32], char label[OTA_LABEL_MAX])
     taskENTER_CRITICAL(&lock);
     bool take = phase == APPROVAL_REQUESTED;
     if (take)
+    {
+        // Under the lock, before APPROVAL_RUNNING is visible to cancel_update: any cancel from now on
+        // is for this wait, and sticks even if it lands before the wait has started.
+        presence_clear_external_cancel();
         phase = APPROVAL_RUNNING;
+    }
     taskEXIT_CRITICAL(&lock);
     if (take)
     {
