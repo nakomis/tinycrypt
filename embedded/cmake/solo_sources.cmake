@@ -43,6 +43,7 @@ set(SOLO_CORE_SOURCES
 
 # tinycrypt's own portable code (CC0), shared by the sim and the ESP32 build.
 set(TINYCRYPT_PORT_SOURCES
+  ${TINYCRYPT_ROOT}/port/presence.c
   ${TINYCRYPT_ROOT}/port/presence_sig.c
 )
 
