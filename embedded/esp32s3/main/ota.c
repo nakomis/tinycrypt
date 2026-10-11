@@ -59,8 +59,9 @@ static int approval_result;
 static char *job_url;
 static char job_version[OTA_VERSION_MAX];
 static uint8_t job_sha256[OTA_SHA256_LEN];
-static int64_t job_finished_us;  // when the last update ended (in failure: success restarts)
-#define REDELIVERY_WINDOW_US (30 * 1000000LL)
+// SHA-256 of the last update command's URL. IoT Core redelivers the very same bytes; every trigger
+// from Fleet presigns a fresh URL. So the same URL again is a redelivery (or a replay), never a retry.
+static uint8_t last_url_hash[32];
 static uint8_t approval_hash[32];
 static char approval_label[OTA_LABEL_MAX];
 
@@ -367,7 +368,6 @@ static void finish(void)
     taskEXIT_CRITICAL(&lock);
     free(job_url);
     job_url = NULL;
-    job_finished_us = esp_timer_get_time();
 }
 
 static void ota_task(void *arg)
@@ -477,12 +477,12 @@ static void start_update(const ota_cmd *cmd)
         return;
     }
     // IoT Core redelivers a command whose PUBACK was slow (the MQTT task is starved while a download
-    // runs), sometimes after the update has already failed: don't start it all over again.
-    bool same = strcmp(cmd->version, job_version) == 0 && memcmp(cmd->sha256, job_sha256, sizeof(job_sha256)) == 0;
-    if (same && phase == IDLE && job_finished_us != 0 && esp_timer_get_time() - job_finished_us < REDELIVERY_WINDOW_US)
+    // runs), during the update or after it has failed: the same URL again is that, not a new request.
+    uint8_t url_hash[32];
+    mbedtls_sha256((const unsigned char *)url, strlen(url), url_hash, 0);
+    if (memcmp(url_hash, last_url_hash, sizeof(url_hash)) == 0)
     {
-        ESP_LOGI(TAG, "update to %s again within %lld s of the last: a redelivery, ignored", cmd->version,
-                 REDELIVERY_WINDOW_US / 1000000);
+        ESP_LOGI(TAG, "update to %s with the same URL as the last: a redelivery, ignored", cmd->version);
         free(url);
         return;
     }
@@ -497,14 +497,10 @@ static void start_update(const ota_cmd *cmd)
     if (busy)
     {
         free(url);
-        // IoT Core redelivers a command whose PUBACK was slow (the MQTT task is starved while a
-        // download runs): the same update again is that, not a second request.
-        if (same)
-            ESP_LOGI(TAG, "update to %s again: already under way", cmd->version);
-        else
-            respond_error("ota_error", "busy", cmd->version);
+        respond_error("ota_error", "busy", cmd->version);
         return;
     }
+    memcpy(last_url_hash, url_hash, sizeof(last_url_hash));
     job_url = url;
     snprintf(job_version, sizeof(job_version), "%s", cmd->version);
     memcpy(job_sha256, cmd->sha256, sizeof(job_sha256));
