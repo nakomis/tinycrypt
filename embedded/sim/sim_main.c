@@ -158,6 +158,11 @@ static void watch_arm(void *ctx)
     (void)ctx;
     watch_armed_at = millis();
     fprintf(stderr, ">>> %s action\n", presence_is_new_action() ? "new" : "same");
+    const uint8_t *h = presence_request_hash();
+    fprintf(stderr, ">>> request rp=%s hash=", presence_request_rp());
+    for (int i = 0; i < PRESENCE_REQUEST_HASH_LEN; i++)
+        fprintf(stderr, "%02x", h[i]);
+    fprintf(stderr, "\n");
 }
 
 static bool watch_approved(void *ctx)

@@ -237,11 +237,12 @@ def u2f_register():
 def test_u2f_re_asks_are_one_action_but_a_new_channel_is_not(raw):
     sim, hid = raw("--watch-after", "0", "--up-timeout", "300")
     a = hid.allocate()
-    for _ in range(3):  # the browser's U2F retry loop: short waits back to back
-        hid.send(a, MSG, u2f_register())
+    request = u2f_register()
+    for _ in range(3):  # the browser's U2F retry loop: the same request, short waits back to back
+        hid.send(a, MSG, request)
         hid.until(a, {MSG}, 2)
     b = hid.allocate()
-    hid.send(b, MSG, u2f_register())
+    hid.send(b, MSG, request)
     hid.until(b, {MSG}, 2)
     time.sleep(0.2)
     assert actions(sim) == [">>> new action", ">>> same action", ">>> same action", ">>> new action"]
@@ -262,3 +263,30 @@ def test_a_retry_after_a_full_timeout_or_a_cancel_is_a_new_action(raw):
     hid.until(a, {CBOR}, 2)
     time.sleep(0.2)
     assert actions(sim) == [">>> new action"] * 3
+
+
+def requests(sim):
+    return [line for line in sim.log if line.startswith(">>> request ")]
+
+
+def test_the_wait_knows_the_site_and_the_request_hash(raw):
+    import hashlib
+    sim, hid = raw("--watch-after", "100", "--up-timeout", "5000")
+    a = hid.allocate()
+    payload = make_credential()
+    hid.send(a, CBOR, payload)
+    hid.until(a, {CBOR}, 3)
+    time.sleep(0.2)
+    assert requests(sim)[-1] == f">>> request rp=example.com hash={hashlib.sha256(payload).hexdigest()}"
+
+
+def test_a_different_request_is_a_new_action_even_on_the_same_channel(raw):
+    sim, hid = raw("--watch-after", "0", "--up-timeout", "300")
+    a = hid.allocate()
+    hid.send(a, MSG, u2f_register())
+    hid.until(a, {MSG}, 2)
+    hid.send(a, MSG, u2f_register())  # a fresh challenge: another request
+    hid.until(a, {MSG}, 2)
+    time.sleep(0.2)
+    assert actions(sim) == [">>> new action", ">>> new action"]
+    assert all(r.startswith(">>> request rp= hash=") for r in requests(sim))  # U2F: no site name

@@ -255,18 +255,32 @@ static void send_request(void)
         snprintf(&id[2 * i], 3, "%02x", raw[i]);
     int64_t sent_at = epoch_ms();
 
-    // TODO(BLE firmware): add a hash of the CTAP request, bound into the BLE challenge, so a late
-    // or replayed push can't approve a different request.
+    // The request this push is for (CRYPT-18): the watch only signs a BLE challenge carrying the
+    // same hash, and shows the site so you know what you're approving.
+    const char *rp = presence_request_rp();
+    const uint8_t *hash = presence_request_hash();
+    char req[2 * PRESENCE_REQUEST_HASH_LEN + 1];
+    for (int i = 0; i < PRESENCE_REQUEST_HASH_LEN; i++)
+        snprintf(&req[2 * i], 3, "%02x", hash[i]);
+    char body[PRESENCE_RP_MAX + 32];
+    if (rp[0])
+        snprintf(body, sizeof(body), "Sign in to %s?", rp);
+    else
+        snprintf(body, sizeof(body), "Your security key wants approval");
+
     cJSON *apns = cJSON_CreateObject();
     cJSON *aps = cJSON_AddObjectToObject(apns, "aps");
     cJSON *alert = cJSON_AddObjectToObject(aps, "alert");
     cJSON_AddStringToObject(alert, "title", "Sign in?");
-    cJSON_AddStringToObject(alert, "body", "Your security key wants approval");
+    cJSON_AddStringToObject(alert, "body", body);
     cJSON_AddStringToObject(aps, "category", "PRESENCE");
     cJSON_AddStringToObject(aps, "sound", "default");
     cJSON *tc = cJSON_AddObjectToObject(apns, "tc");
     cJSON_AddStringToObject(tc, "id", id);
     cJSON_AddStringToObject(tc, "key", CONFIG_TINYCRYPT_THING_NAME);
+    cJSON_AddStringToObject(tc, "req", req);
+    if (rp[0])
+        cJSON_AddStringToObject(tc, "rp", rp);
     if (sent_at)
         cJSON_AddNumberToObject(tc, "sentAt", (double)sent_at);
     char *apns_text = cJSON_PrintUnformatted(apns);

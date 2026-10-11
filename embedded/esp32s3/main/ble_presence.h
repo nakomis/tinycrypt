@@ -1,8 +1,8 @@
 // Watch presence over BLE (CRYPT-13): the key is the GATT peripheral, the watch the central.
 //
-// GATT protocol v0, as the watch app speaks it (watch/TinycryptWatch/Sources/PresenceProtocol.swift):
+// GATT protocol v1, as the watch app speaks it (watch/TinycryptWatch/Sources/PresenceProtocol.swift):
 //   service    30CCC4F1-350D-4FDF-89C5-6120E2CC5044
-//   challenge  read   "tinycrypt-presence-v0" || nonce(32); only while a presence wait is armed
+//   challenge  read   "tinycrypt-presence-v1" || nonce(32) || request hash(32) (CRYPT-18; v0 had no hash)
 //   response   write  r||s (64): the watch Secure Enclave's signature over SHA-256(challenge)
 //   enrol      write  X||Y (64): the watch's public key; only while the enrol window is open
 //   telemetry  write  timing JSON from the watch, logged

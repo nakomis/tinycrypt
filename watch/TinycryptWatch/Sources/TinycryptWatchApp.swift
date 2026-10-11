@@ -83,7 +83,9 @@ final class AppDelegate: NSObject, WKApplicationDelegate, UNUserNotificationCent
             return
         }
         let route = AppModel.shared.route
-        let report = await PresenceClient(mode: .approve, route: route, start: tap, context: context).run()
+        let expected = Presence.requestHash(response.notification)
+        let report = await PresenceClient(mode: .approve, route: route, start: tap, context: context,
+                                          expectedRequest: expected).run()
         AppModel.shared.record(report)
     }
 }
@@ -125,6 +127,21 @@ enum Presence {
             "sentToApnsDateMs": String(ms(notification.date) - sentAt),
         ]
         return out
+    }
+
+    /// The request hash a push from the key carries (tc.req, hex), or nil for a local test notification.
+    static func requestHash(_ notification: UNNotification) -> Data? {
+        guard let tc = notification.request.content.userInfo["tc"] as? [String: Any],
+              let hex = tc["req"] as? String, hex.count == 64 else { return nil }
+        var bytes = Data(capacity: 32)
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
+            bytes.append(byte)
+            index = next
+        }
+        return bytes
     }
 
     static func schedule(after seconds: TimeInterval) async throws {

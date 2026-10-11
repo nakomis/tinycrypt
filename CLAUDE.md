@@ -43,8 +43,14 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   `presence_is_new_action()` groups U2F's 750 ms re-asks on one channel into one action (one push, one
   challenge); a new channel, a cancel, an approval, a 3 s gap or a retry after a full timeout starts a
   new one, and a cancel also discards the challenge and any unused approval. Sim: `--presence button+watch --watch-after MS --up-timeout MS`.
+- **Approval is bound to the request** (CRYPT-18): the wait reassembles the requesting channel's CTAP
+  message, hashes it (SHA-256 of the CTAPHID payload) and reads the rpId (CTAP2 only; U2F has just a
+  hash). The push says "Sign in to <rp>?" and carries `tc.req`; the challenge is protocol **v1**,
+  `"tinycrypt-presence-v1" ‖ nonce32 ‖ reqhash32`; the watch signs only if the challenge's hash matches
+  the push it was tapped from, and a different request hash is always a new user action. The app's
+  own "Arm in 10 s" test notification has no `tc.req`, so it accepts any v1 challenge.
 - **Watch over BLE on the key** (`esp32s3/main/ble_presence.c`, NimBLE, `CONFIG_TINYCRYPT_WATCH_BLE`): the
-  key advertises the protocol-v0 GATT service; a challenge (`"tinycrypt-presence-v0" ‖ nonce32`) is
+  key advertises the protocol GATT service; a challenge is
   readable during a wait (and up to 3 s after, for U2F re-asks) and approves once. No pairing yet, so
   every connection is dropped after 10 s and two are allowed (a squatter can't lock the watch out). **Enrol:** hold BOOT 5 s while idle (not at power-up:
   that's download mode) for a 60 s window; the watch taps "Enrol with key". Its public key is in NVS

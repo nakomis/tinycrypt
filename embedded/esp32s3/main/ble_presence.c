@@ -21,10 +21,12 @@
 
 static const char *TAG = "ble-presence";
 
-#define DOMAIN_TAG "tinycrypt-presence-v0"
+// Protocol v1 (CRYPT-18): the challenge carries the request hash, so a signature approves only the
+// request it was made for.
+#define DOMAIN_TAG "tinycrypt-presence-v1"
 #define DOMAIN_LEN (sizeof(DOMAIN_TAG) - 1)
 #define NONCE_LEN 32
-#define CHALLENGE_LEN (DOMAIN_LEN + NONCE_LEN)
+#define CHALLENGE_LEN (DOMAIN_LEN + NONCE_LEN + PRESENCE_REQUEST_HASH_LEN)
 // An unapproved challenge outlives its wait by this long, so a U2F re-ask can still use it.
 #define SAME_ACTION_GAP_US ((int64_t)PRESENCE_SAME_ACTION_GAP_MS * 1000)
 // Any connection is dropped after this long: an approval takes under 2 s.
@@ -65,6 +67,7 @@ static void arm(void *ctx)
     {
         memcpy(challenge, DOMAIN_TAG, DOMAIN_LEN);
         memcpy(challenge + DOMAIN_LEN, nonce, NONCE_LEN);
+        memcpy(challenge + DOMAIN_LEN + NONCE_LEN, presence_request_hash(), PRESENCE_REQUEST_HASH_LEN);
         challenge_live = true;
         approved = false;
     }
