@@ -6,6 +6,7 @@
 // tc.sentAt (ms since the epoch, from SNTP) lets the watch time the trip and refuse stale requests.
 // The push carries no authority: approval only counts once the watch signs the key's BLE challenge.
 #include "notifier.h"
+#include "led_status.h"
 #include "presence.h"
 
 #include <inttypes.h>
@@ -45,6 +46,7 @@ static volatile bool mqtt_connected;
 // and sent as soon as MQTT connects, if its wait is still running.
 static portMUX_TYPE pending_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool pending;
+static bool ever_connected;  // before the first connection the LED says "connecting", after it "offline"
 static esp_timer_handle_t wifi_retry;
 static uint32_t wifi_retry_ms = WIFI_RETRY_MIN_MS;
 static bool started;
@@ -67,6 +69,8 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     {
         // MQTT only notices a dead socket at its next keepalive; stop queueing into it now.
         mqtt_connected = false;
+        if (ever_connected)
+            led_status_set(LED_OFFLINE, true);
         ESP_LOGW(TAG, "Wi-Fi disconnected (reason %d), retrying in %" PRIu32 " ms",
                  ((wifi_event_sta_disconnected_t *)data)->reason, wifi_retry_ms);
         esp_timer_start_once(wifi_retry, (uint64_t)wifi_retry_ms * 1000);
@@ -88,6 +92,11 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     {
         mqtt_connected = true;
         ESP_LOGI(TAG, "MQTT connected to IoT Core as %s", CONFIG_TINYCRYPT_THING_NAME);
+        led_status_set(LED_CONNECTING, false);
+        led_status_set(LED_OFFLINE, false);
+        if (!ever_connected)
+            led_status_flash(LED_FLASH_ONLINE);
+        ever_connected = true;
         taskENTER_CRITICAL(&pending_lock);
         bool send_now = pending;
         pending = false;
@@ -101,6 +110,8 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
     case MQTT_EVENT_DISCONNECTED:
         mqtt_connected = false;
+        if (ever_connected)
+            led_status_set(LED_OFFLINE, true);
         ESP_LOGW(TAG, "MQTT disconnected");
         break;
     case MQTT_EVENT_PUBLISHED:

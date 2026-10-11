@@ -8,6 +8,23 @@ config TINYCRYPT_NOTIFIER
         SNS and APNs to the watch. The BOOT button keeps working whatever happens to the network.
         Needs certs/ and sdkconfig.secrets from infra/scripts/provision-key.sh.
 
+config TINYCRYPT_LED
+    bool "Status LED (one WS2812-class RGB LED)"
+    default y
+    help
+        Shows connection, presence, enrolment and fault states (led_status.h).
+
+config TINYCRYPT_LED_GPIO
+    int "Status LED data GPIO (17 on the tinycrypt PCB; 48 or 38 on ESP32-S3 dev boards)"
+    depends on TINYCRYPT_LED
+    default 48
+
+config TINYCRYPT_LED_BRIGHTNESS
+    int "Status LED brightness, percent of full (these LEDs are blinding at 100)"
+    depends on TINYCRYPT_LED
+    range 1 100
+    default 8
+
 config TINYCRYPT_WATCH_BLE
     bool "Accept presence from the watch over BLE (signed challenge)"
     depends on BT_NIMBLE_ENABLED

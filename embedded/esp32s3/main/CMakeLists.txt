@@ -1,6 +1,6 @@
 include(${COMPONENT_DIR}/../../cmake/solo_sources.cmake)
 
-set(srcs main.c ${TINYCRYPT_PORT_SOURCES})
+set(srcs main.c led_status.c ${TINYCRYPT_PORT_SOURCES})
 set(embed "")
 if(CONFIG_TINYCRYPT_WATCH_BLE)
   list(APPEND srcs ble_presence.c)

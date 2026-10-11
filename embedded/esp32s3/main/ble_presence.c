@@ -1,5 +1,6 @@
 // Watch presence over BLE (CRYPT-13). See ble_presence.h.
 #include "ble_presence.h"
+#include "led_status.h"
 
 #include <inttypes.h>
 #include <string.h>
@@ -42,6 +43,7 @@ static bool approved;            // a valid response arrived for the live challe
 static bool waiting;             // a presence wait is in progress
 static int64_t last_wait_end_us;
 static int64_t enrol_until_us;
+static esp_timer_handle_t enrol_timer;
 
 static uint8_t watch_pub[TINYCRYPT_P256_PUB_LEN];
 static bool have_watch;
@@ -116,8 +118,25 @@ static void expire_challenge(void)
 
 // ---- enrolment ---------------------------------------------------------------
 
+static void enrol_window_closed(void *arg)
+{
+    (void)arg;
+    led_status_set(LED_ENROL_OPEN, false);
+}
+
 void ble_presence_open_enrol(uint32_t seconds)
 {
+    if (enrol_timer == NULL)
+    {
+        const esp_timer_create_args_t args = {.callback = enrol_window_closed, .name = "enrol"};
+        esp_timer_create(&args, &enrol_timer);
+    }
+    if (enrol_timer != NULL)
+    {
+        esp_timer_stop(enrol_timer);
+        esp_timer_start_once(enrol_timer, (uint64_t)seconds * 1000000);
+    }
+    led_status_set(LED_ENROL_OPEN, true);
     int64_t until = esp_timer_get_time() + (int64_t)seconds * 1000000;
     taskENTER_CRITICAL(&lock);
     enrol_until_us = until;
@@ -161,6 +180,10 @@ static int enrol(const uint8_t *pub, size_t len)
     taskENTER_CRITICAL(&lock);
     enrol_until_us = 0;  // one watch per window
     taskEXIT_CRITICAL(&lock);
+    if (enrol_timer != NULL)
+        esp_timer_stop(enrol_timer);
+    led_status_set(LED_ENROL_OPEN, false);
+    led_status_flash(LED_FLASH_ENROLLED);
     ESP_LOGW(TAG, "ENROLLED watch key %02x%02x%02x%02x...", pub[0], pub[1], pub[2], pub[3]);
     return 0;
 }
@@ -226,6 +249,7 @@ static int gatt_access(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt
             return BLE_ATT_ERR_READ_NOT_PERMITTED;
         }
         ESP_LOGI(TAG, "challenge read");
+        led_status_set(LED_WATCH_SIGNING, true);
         return os_mbuf_append(ctxt->om, msg, sizeof(msg)) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
 
@@ -324,6 +348,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         break;
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "central disconnected (reason 0x%x)", event->disconnect.reason);
+        led_status_set(LED_WATCH_SIGNING, false);
         connection_closed(event->disconnect.conn.conn_handle);
         advertise();
         break;
