@@ -57,9 +57,14 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   app's own local "Arm in 10 s" test notification may approve without one.
 - **Watch over BLE on the key** (`esp32s3/main/ble_presence.c`, NimBLE, `CONFIG_TINYCRYPT_WATCH_BLE`): the
   key advertises the protocol GATT service; a challenge is
-  readable during a wait (and up to 3 s after, for U2F re-asks) and approves once. No pairing yet, so
-  every connection is dropped after 10 s and two are allowed (a squatter can't lock the watch out). **Enrol:** hold BOOT 5 s while idle (not at power-up:
-  that's download mode) for a 60 s window; the watch taps "Enrol with key". Its public key is in NVS
+  readable during a wait (and up to 3 s after, for U2F re-asks) and approves once. **Bonded** (CRYPT-19):
+  LE Secure Connections, Just Works, bonds in NVS (two at most); the challenge, response and telemetry
+  characteristics need an encrypted link, and only the enrolled watch's identity address (`watch_peer`)
+  may use it: any other bond is deleted and the link dropped, and repeat pairing is only allowed in the
+  enrol window. Connections are still dropped after 10 s and two are allowed (a squatter can't lock the
+  watch out). **Enrol:** hold BOOT 5 s while idle (not at power-up: that's download mode) for a 60 s
+  window; the watch taps "Enrol with key" and accepts the pairing request (enrolment needs the bonded
+  link). A watch enrolled before bonding must enrol again. Its public key is in NVS
   (`watch_pub`), so reflashing keeps it. Wi-Fi runs modem sleep alongside BLE (ESP-IDF requires it).
   Measured: tap on Approve → key verified 1.5–1.9 s, app in the background. If no radio starts, the
   ADC entropy source is switched back on. `sdkconfig.defaults` only applies to a fresh `sdkconfig`:
