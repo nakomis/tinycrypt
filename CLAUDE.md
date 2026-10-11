@@ -68,7 +68,8 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   (`watch_pub`), so reflashing keeps it. Wi-Fi runs modem sleep alongside BLE (ESP-IDF requires it).
   Measured: tap on Approve → key verified 1.5–1.9 s, app in the background. If no radio starts, the
   ADC entropy source is switched back on. `sdkconfig.defaults` only applies to a fresh `sdkconfig`:
-  after changing it, `rm embedded/esp32s3/sdkconfig` and rebuild.
+  after changing it, `rm embedded/esp32s3/sdkconfig` and rebuild. A new option in `Kconfig.projbuild`
+  isn't picked up by a plain build either (its `CONFIG_` is undeclared): run `build.sh reconfigure` first.
 - **Presence contract** (`ctap_user_presence_test`): return only 1 (present), 0 (absent, cancelled
   or timed out) or 2 (check disabled by the request). solo1's U2F code tests `== 0` / `!ret`, so
   any other value (e.g. -1 for cancel) counts as present and signs without a press. (solo1's
@@ -152,8 +153,18 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   So **BLE (host and controller) is paused for the download** (`ble_presence_suspend`, not during a
   presence wait) and resumed before the approval: 109 KB free, largest block 31.7 KB. mbedTLS dynamic
   buffers are on. esp_http_client's TX buffer is sized to the presigned URL (~3 KB with an STS token).
-  IoT Core redelivers commands whose PUBACK was slow during a download: a repeated URL is ignored (every
-  Fleet trigger presigns a new one). An `ota_cancel` sticks until the approval wait it's for ends, and
+  IoT Core redelivers commands whose PUBACK was slow during a download: a repeated URL is ignored, with
+  **no reply on purpose** (it usually lands during the download it started, and an `ota_error` with that
+  version would show Fleet a running update as failed; every Fleet trigger presigns a new URL, so a real
+  retry never repeats one). **Limits** (CRYPT-21, `ota.h`; RAM only, a reboot clears them), because a
+  download pauses BLE and erases the spare slot and an approval blocks CTAP and buzzes the watch:
+  the running version or older is refused before downloading (`already running` / `downgrade refused`);
+  a download must finish in `CONFIG_TINYCRYPT_OTA_DOWNLOAD_DEADLINE_S` (300; `publish-ota.sh` refuses
+  < 120) and move 32 KB every 30 s; a failed one (cancel included) refuses updates for 30 s, doubling
+  to 15 min (`busy: retry in N s`); an image whose approval timed out or was rejected is refused for
+  10 min (`declined recently`), and no prompt follows an unapproved one within 60 s. A chunk set is
+  capped at `OTA_URL_MAX` as it arrives and dropped after 60 s. The LED pulses **amber** while an update
+  waits for approval (blue is a sign-in). An `ota_cancel` sticks until the approval wait it's for ends, and
   wins over a racing approval. **NVS is never erased** to get past an init error (counter, resident keys,
   watch): a new image that can't read it rolls back. Failures report their cause (TLS error, errno,
   heap) in `ota_error`, since the log is out of reach on the native port: for a serial log, swap to the
@@ -166,7 +177,12 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   one. `build.sh` builds then `sign.sh` signs (never `idf.py flash`: unsigned). The key is in SSM
   `/tinycrypt/{env}/ota/signing-key` (master) and the Keychain (`tinycrypt-ota-signing`/`{env}`, base64);
   made once by `infra/scripts/ota-signing-key.sh` (sandbox public key digest `2d1d16f2…`). Replacing it
-  strands every key in the field. Without secure boot this protects updates, not a USB cable.
+  strands every key in the field. Without secure boot this protects updates, not a USB cable. The
+  public half is committed (`esp32s3/ota-signing/{env}.pub.pem`): `sign.sh`, `flash-manual.sh` and
+  `publish-ota.sh` check images against it, so one signed by another key (which would boot, then refuse
+  every update) is refused, and an already-signed image needs no Keychain read. The private key never
+  goes on a command line: the Keychain item is added through `security -i` (stdin), ACL
+  `-T /usr/bin/security` (explicit default; `-T ""` would prompt on every read and block unattended builds).
 - **Publishing**: bump `esp32s3/version.txt`, commit, `esp32s3/publish-ota.sh x.y.z` (clean tree, new
   version only, no per-key strings in the image) uploads `nakomis-firmware-{env}/tinycrypt/x.y.z/firmware.bin`
   with `signed=true` and its sha256; then update from Fleet's UI. The Thing's attributes
