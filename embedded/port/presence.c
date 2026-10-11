@@ -11,8 +11,21 @@
 #define CID_LEN 4
 #define CMD_OFFSET 4
 
+// Same user action: a short wait (a U2F poll) ending less than this long before the next starts.
+#define SAME_ACTION_GAP_MS 3000
+#define SHORT_WAIT_MS 2000
+
 static uint8_t request_cid[CID_LEN];
 static bool have_request_cid;
+
+static bool new_action;
+static bool last_approved = true;  // so the first wait is always a new action
+static uint32_t last_start_ms, last_end_ms;
+
+bool presence_is_new_action(void)
+{
+    return new_action;
+}
 
 static bool is_init_packet(const uint8_t *report)
 {
@@ -58,12 +71,14 @@ static bool handle_report(const presence_io *io, const uint8_t *report)
 int presence_wait(uint32_t timeout_ms, const presence_source *const *sources, size_t n_sources,
                   const presence_io *io)
 {
+    uint32_t start = io->now_ms();
+    new_action = last_approved || start - last_end_ms >= SAME_ACTION_GAP_MS ||
+                 last_end_ms - last_start_ms >= SHORT_WAIT_MS;
     for (size_t i = 0; i < n_sources; i++)
         if (sources[i]->arm)
             sources[i]->arm(sources[i]->ctx);
 
     int result = 0;
-    uint32_t start = io->now_ms();
     uint32_t next_keepalive = start;
     uint8_t report[PRESENCE_REPORT_SIZE];
     while (io->now_ms() - start < timeout_ms)
@@ -85,6 +100,9 @@ int presence_wait(uint32_t timeout_ms, const presence_source *const *sources, si
         }
     }
 
+    last_start_ms = start;
+    last_end_ms = io->now_ms();
+    last_approved = result == 1;
     for (size_t i = 0; i < n_sources; i++)
         if (sources[i]->disarm)
             sources[i]->disarm(sources[i]->ctx, result);

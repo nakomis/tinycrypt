@@ -43,6 +43,13 @@ typedef struct presence_io
 // knows which channel made the request.
 void presence_note_report(const uint8_t report[PRESENCE_REPORT_SIZE]);
 
+// True while sources are being armed if this wait starts a new user action, false if it repeats
+// the last one. solo1's U2F path re-asks for presence every 750 ms while the browser retries; those
+// short, back-to-back waits are one action, so they share one push and one watch challenge. A new
+// action: the first wait, one after an approval, one after a gap of 3 s or more, or one after a
+// long wait (a CTAP2 wait that timed out, retried by the client).
+bool presence_is_new_action(void);
+
 // Arms every source and waits up to timeout_ms. Returns 1 if a source approved, else 0
 // (timed out, or cancelled by the requesting channel).
 int presence_wait(uint32_t timeout_ms, const presence_source *const *sources, size_t n_sources,

@@ -6,6 +6,7 @@
 // tc.sentAt (ms since the epoch, from SNTP) lets the watch time the trip and refuse stale requests.
 // The push carries no authority: approval only counts once the watch signs the key's BLE challenge.
 #include "notifier.h"
+#include "presence.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -30,9 +31,6 @@ extern const char root_ca_start[] asm("_binary_AmazonRootCA1_pem_start");
 extern const char device_cert_start[] asm("_binary_device_pem_crt_start");
 extern const char device_key_start[] asm("_binary_device_pem_key_start");
 
-// A presence wait that starts within this long of the previous one ending (unapproved) is the
-// same user action being retried, so it sends nothing new.
-#define SAME_ACTION_GAP_US (3 * 1000 * 1000)
 // Wi-Fi reconnect backoff, so a wrong password or a missing AP doesn't spin the radio.
 #define WIFI_RETRY_MIN_MS 1000
 #define WIFI_RETRY_MAX_MS 30000
@@ -45,9 +43,6 @@ static esp_timer_handle_t wifi_retry;
 static uint32_t wifi_retry_ms = WIFI_RETRY_MIN_MS;
 static bool started;
 
-// CTAP task only.
-static int64_t last_wait_end_us;
-static bool last_wait_approved = true;  // so the first wait after boot always notifies
 
 static void wifi_retry_fire(void *arg)
 {
@@ -144,9 +139,14 @@ void notifier_start(void)
     TRY(esp_wifi_set_mode(WIFI_MODE_STA));
     TRY(esp_wifi_set_config(WIFI_IF_STA, &sta));
     TRY(esp_wifi_start());
+#ifdef CONFIG_BT_ENABLED
+    // Wi-Fi and BLE share the radio, and ESP-IDF requires modem sleep for that. A push then waits
+    // for the next beacon at most (~100 ms with DTIM 1).
+    TRY(esp_wifi_set_ps(WIFI_PS_MIN_MODEM));
+#else
     // No modem sleep: a held-open connection should answer at once, not on the next DTIM beacon.
-    // (Revisit when BLE shares the radio.)
     TRY(esp_wifi_set_ps(WIFI_PS_NONE));
+#endif
 
     esp_sntp_config_t sntp = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
     TRY(esp_netif_sntp_init(&sntp));
@@ -240,12 +240,7 @@ static void send_request(void)
 
 void notifier_presence_wait_started(void)
 {
-    if (last_wait_approved || esp_timer_get_time() - last_wait_end_us > SAME_ACTION_GAP_US)
+    // One push per user action (presence.h): U2F's 750 ms re-asks don't each buzz the watch.
+    if (presence_is_new_action())
         send_request();
-}
-
-void notifier_presence_wait_ended(int presence_result)
-{
-    last_wait_end_us = esp_timer_get_time();
-    last_wait_approved = presence_result == 1;
 }
