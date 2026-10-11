@@ -487,10 +487,14 @@ def silk_key(circuit, placement):
 
 def silk_avoid(circuit, placement):
     """Boxes where footprint silk lines are dropped: the module outline's right side runs
-    through the debug-pad labels."""
-    return [b for b, e in zip(front_text_boxes(circuit, placement, margin=0.15),
-                              [e for e in silk_key(circuit, placement) if len(e) == 4 or e[4] == "F.SilkS"])
-            if e[0] in DEBUG_LABELS.values() and len(e) > 5]
+    through the debug-pad labels, so for a symmetrical look (the board is on show in a clear case)
+    the whole outline goes; the module marks itself, and its pin-1 dot stays."""
+    x0, x1, yb = CX - 7.7, CX + 7.8, MOD_Y + 7.7
+    outline = [(x0 - 0.1, -1.0, x0 + 0.1, yb + 0.1), (x1 - 0.1, -1.0, x1 + 0.1, yb + 0.1),
+               (x0 - 0.1, yb - 0.1, x1 + 0.1, yb + 0.1)]
+    return outline + [b for b, e in zip(front_text_boxes(circuit, placement, margin=0.15),
+                                        [e for e in silk_key(circuit, placement) if len(e) == 4 or e[4] == "F.SilkS"])
+                      if e[0] in DEBUG_LABELS.values() and len(e) > 5]
 
 
 def fab_notes():

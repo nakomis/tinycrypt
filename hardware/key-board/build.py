@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Board generator: circuit -> placement -> (route) -> board + DRC -> fab outputs.
 
-    ./.venv/bin/python build.py --board key [--route] [--passes N]
+    ./.venv/bin/python build.py --board key [--route] [--step] [--passes N]
 
 Output goes to out/<board>/. Fab outputs (gerbers zip, BOM, CPL, renders, pins.h) are written
 only when DRC has no errors and no unconnected items."""
@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 from board import key_board as kb
-from board.fab import fab, write_bom, write_cpl
+from board.fab import export_step, fab, write_bom, write_cpl
 from board.kicad_pcb import write_board
 from board.cleanup import prune
 from board.netlist import check
@@ -46,6 +46,8 @@ def main():
     ap.add_argument("--board", choices=sorted(BOARDS), required=True)
     ap.add_argument("--route", action="store_true")
     ap.add_argument("--passes", type=int, default=100)
+    ap.add_argument("--step", action="store_true",
+                    help="also fetch the 3D models and write the STEP model and a 3D render")
     a = ap.parse_args()
     stem = BOARDS[a.board]
     out = HERE / "out" / a.board
@@ -91,6 +93,9 @@ def main():
     write_cpl(c, p, out / "cpl.csv")
     (out / "pins.h").write_text(kb.pins_h())
     fab(board, out, layers=LAYERS)
+    if a.step:
+        subprocess.run([str(HERE / "fetch_models.sh")], check=True)     # resumable, skips fetched parts
+        print(f"STEP: {export_step(board, out)}")
     print(f"fab outputs in {out}: bom.csv, cpl.csv, pins.h, {stem}-gerbers.zip, renders; "
           f"order with solder mask {MASK}, silkscreen {SILK}")
 

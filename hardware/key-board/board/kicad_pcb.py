@@ -1,10 +1,12 @@
 """Write a KiCad 10 .kicad_pcb (and its .kicad_pro) from a Circuit and a Placement."""
 import copy
+import os
 import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from board.parts import MODEL_OFFSET, MODEL_OVERRIDE
 from board.placement import rotate
 from board.sexpr import Sym, dumps, find, find_all
 
@@ -103,10 +105,27 @@ def _modern_arc(arc):
     arc[1:1] = [[S("start"), first[1], first[2]], [S("mid")] + pt(-angle / 2), [S("end")] + pt(-angle)]
 
 
-def _footprint(inst, x, y, rot, nets, uid, hide_ref=False):
+def _model(node, model_dir, key=None):
+    """A footprint's (model ...) with its file pointed at the fetched STEP (kicad-cli's STEP export
+    needs STEP, not WRL); scale and rotation are kept as the footprint has them, and so is the
+    offset unless parts.MODEL_OFFSET corrects it."""
+    m = copy.deepcopy(node)
+    name = Path(str(m[1])).stem
+    m[1] = f"{model_dir}/{name}.step"
+    if key in MODEL_OFFSET:
+        find(m, "offset")[1:] = [[S("xyz"), *MODEL_OFFSET[key]]]
+    return m
+
+
+def _footprint(inst, x, y, rot, nets, uid, hide_ref=False, model_dir=None):
     fp = copy.deepcopy(inst.part.footprint.node)
     fp[0] = S("footprint")
     fp[1] = str(fp[1]).split(":")[-1]      # the library nickname is not configured in the project
+    models = [_model(m, model_dir, inst.part.key) for m in find_all(fp, "model")]
+    if not models and inst.part.key in MODEL_OVERRIDE:
+        models = [[S("model"), f"{model_dir}/{MODEL_OVERRIDE[inst.part.key]}.step",
+                   [S("offset"), [S("xyz"), 0, 0, 0]], [S("scale"), [S("xyz"), 1, 1, 1]],
+                   [S("rotate"), [S("xyz"), 0, 0, 0]]]]
     fp[:] = [v for v in fp if not (isinstance(v, list) and v and v[0] in ("model", "tedit", "at", "uuid"))]
     i = next(k for k, v in enumerate(fp) if isinstance(v, list) and v and v[0] == "layer")
     fp[i + 1:i + 1] = [[S("at"), x, y, rot] if rot else [S("at"), x, y], uid()]
@@ -137,6 +156,7 @@ def _footprint(inst, x, y, rot, nets, uid, hide_ref=False):
         if net is not None:
             pad.append([S("net"), net[0], net[1]])
         pad.append(uid())
+    fp += models
     return fp
 
 
@@ -228,7 +248,8 @@ PRO = {
 
 
 def write_board(circuit, placement, path, tracks=(), vias=(), layers=4, silk=(), hide_refs=(), art=(),
-                mask=None, silkscreen=None, keepouts=(), pad_extra=None, user_rects=(), silk_avoid=()):
+                mask=None, silkscreen=None, keepouts=(), pad_extra=None, user_rects=(), silk_avoid=(),
+                model_dir=None):
     """Write 'path' (.kicad_pcb) and a .kicad_pro beside it.
 
     layers=4: F.Cu, In1.Cu (GND zone), In2.Cu (+1V5 zone, only if that net exists), B.Cu.
@@ -242,12 +263,17 @@ def write_board(circuit, placement, path, tracks=(), vias=(), layers=4, silk=(),
     margin, a solid zone connection); f gets the kicadlib Pad.
     user_rects: (x0, y0, x1, y1, layer) outlines on user layers (fab notes).
     silk_avoid: boxes (x0, y0, x1, y1); footprint silk lines that cross one are dropped.
+    model_dir: where the 3D models are, as the board file should name it (default: relative to
+    the board's directory through ${KIPRJMOD}, which kicad-cli resolves).
     mask, silkscreen: colour names for the stackup, which only affects renders (gerbers carry
     no colour). None for both keeps KiCad's defaults (green mask, white silk)."""
     if layers not in (2, 4):
         raise ValueError("layers must be 2 or 4")
     path = Path(path)
     uid = _Uuids()
+    if model_dir is None:
+        from board.parts import LCSC_3D
+        model_dir = "${KIPRJMOD}/" + os.path.relpath(LCSC_3D, path.resolve().parent)
     names = sorted(circuit.nets)
     ids = {n: i + 1 for i, n in enumerate(names)}
     cu = [[0, "F.Cu", "signal"]]
@@ -268,7 +294,7 @@ def write_board(circuit, placement, path, tracks=(), vias=(), layers=4, silk=(),
     for ref, inst in circuit.instances.items():
         x, y, rot = placement.at[ref]
         nets = {pad: (ids[n], n) for n in names for (r, pad) in circuit.nets[n] if r == ref}
-        fp = _footprint(inst, x, y, rot, nets, uid, ref in hide_refs)
+        fp = _footprint(inst, x, y, rot, nets, uid, ref in hide_refs, model_dir)
         if pad_extra and ref in pad_extra:
             for node, pad in zip(find_all(fp, "pad"), inst.part.footprint.pads):
                 node[-1:-1] = pad_extra[ref](pad)       # before the pad's uuid

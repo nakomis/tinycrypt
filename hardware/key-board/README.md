@@ -20,6 +20,27 @@ mkdir -p freerouting && cp <somewhere>/freerouting-2.5.0.jar freerouting/   # Ja
 when KiCad's DRC has no errors and no unconnected items (kicad-cli exits 0 even when DRC fails).
 Freerouting isn't deterministic, but it now routes only BUTTON, LED_GPIO and LED_DIN, which are short.
 
+## 3D model (for the case)
+
+```bash
+.venv/bin/python build.py --board key --route --step   # also runs ./fetch_models.sh (resumable)
+```
+
+`--step` fetches the parts' 3D models (STEP + WRL, about 17 MB, into `footprints/lcsc.3dshapes/`,
+gitignored), then writes `out/key/tinycrypt-key.step` (about 9 MB, gitignored; a 1.6 mm board with
+its holes and every part's body) and an isometric render, `out/key/tinycrypt-key-3d.png`.
+
+- Every placed part has a body. The WS2812B-2020-V6 has no EasyEDA model, so it uses the WS2812B-2020
+  one (C965555): the same 2.0 × 2.0 × 0.82 mm package with the same pad layout.
+  The test pads, holes and art have no body.
+- `board/parts.py` `MODEL_OFFSET` corrects easyeda2kicad's offsets where they're wrong, found from
+  renders: SOT-23-6 and C0603 bodies sat off their pads, the JST body was 2 mm to one side, and the
+  capacitors were half inside the board.
+- Heights above the board's top face: J1 2.9 mm (the tallest), module 2.4, U4 (SOIC-8) 1.7,
+  U3 (SOT-23-6) 1.6, SW1 1.5 (its plunger top), U2 1.1, D1 0.82, C0603 0.8, C0402 0.5, R0402 0.4.
+  Nothing on the back, so the bottom is the bare 1.6 mm board.
+- The module's antenna overhangs the board edge by 5.04 mm in the model (5.05 mm in the datasheet).
+
 ## Pins (for the firmware)
 
 `out/key/pins.h` holds these; `board/key_board.py` (`GPIO`) is the source.

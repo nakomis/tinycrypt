@@ -70,3 +70,23 @@ def fab(board_path, out_dir, layers=2):
     for side in ("top", "bottom"):
         run("pcb", "render", "--side", side, "-o", str(out_dir / f"{stem}-{side}.png"), str(board_path))
     return zpath
+
+
+def export_step(board_path, out_dir):
+    """STEP model of the assembled board (1.6 mm body with its holes, every part's body from
+    footprints/lcsc.3dshapes) and an isometric 3D render of it. Returns the STEP path."""
+    board_path, out_dir = Path(board_path), Path(out_dir)
+    step = out_dir / f"{board_path.stem}.step"
+    r = subprocess.run([KICAD_CLI, "pcb", "export", "step", "--force", "--no-dnp", "-o", str(step), str(board_path)],
+                       capture_output=True, text=True)
+    log = r.stdout + r.stderr
+    if r.returncode != 0 or not step.exists():
+        raise RuntimeError(f"STEP export failed:\n{log}")
+    missing = [l.strip() for l in log.splitlines() if "not found" in l.lower() or "could not" in l.lower()]
+    if missing:
+        raise RuntimeError("STEP export is missing models:\n" + "\n".join(missing))
+    subprocess.run([KICAD_CLI, "pcb", "render", "--rotate", "-55,0,35", "--zoom", "0.9", "--quality", "high",
+                    "--width", "1600", "--height", "1200", "--background", "opaque",
+                    "-o", str(out_dir / f"{board_path.stem}-3d.png"), str(board_path)],
+                   check=True, capture_output=True)
+    return step

@@ -130,3 +130,42 @@ def test_module_silk_pulled_inside_the_edge(tmp_path):
         if "SilkS" in find(g, "layer")[1]:
             for key in ("start", "end"):
                 assert kb.MOD_Y + find(g, key)[2] >= 0.2 - 1e-9
+
+
+def test_every_assembled_footprint_has_a_3d_model(tmp_path):
+    """Every non-DNP part JLCPCB places carries a (model ...) pointing at a STEP file in
+    footprints/lcsc.3dshapes (through ${KIPRJMOD}); board-only footprints (test pads, holes, art)
+    have none. If the models have been fetched, each named file exists."""
+    import os
+    from board.parts import LCSC_3D
+    c, pl, pcb = _key(tmp_path)
+    tree = parse(pcb.read_text())
+    refs = {}
+    for fp in find_all(tree, "footprint"):
+        ref = next((p[2] for p in find_all(fp, "property") if p[1] == "Reference"), None)
+        ref = ref or next((t[2] for t in find_all(fp, "fp_text") if t[1] == "reference"), None)
+        refs[ref] = find_all(fp, "model")
+    fitted = [r for r, i in c.instances.items() if i.part.lcsc and not i.dnp]
+    assert fitted
+    for r in fitted:
+        models = refs[r]
+        assert len(models) == 1, r
+        path = models[0][1]
+        assert path.startswith("${KIPRJMOD}/") and path.endswith(".step"), (r, path)
+        local = (tmp_path / path.replace("${KIPRJMOD}/", "")).resolve()
+        assert local.parent == LCSC_3D.resolve(), (r, local)
+        if LCSC_3D.is_dir() and any(LCSC_3D.glob("*.step")):
+            assert local.exists(), (r, local.name)
+    for r in ("TP1", "H1", "H2"):
+        assert refs[r] == [], r
+
+
+def test_model_offset_corrections_written(tmp_path):
+    from board.parts import MODEL_OFFSET
+    c, pl, pcb = _key(tmp_path)
+    tree = parse(pcb.read_text())
+    for fp in find_all(tree, "footprint"):
+        ref = next((t[2] for t in find_all(fp, "fp_text") if t[1] == "reference"), None)
+        if ref in c.instances and c.instances[ref].part.key in MODEL_OFFSET:
+            got = find(find(find(fp, "model"), "offset"), "xyz")[1:]
+            assert got == list(MODEL_OFFSET[c.instances[ref].part.key]), ref

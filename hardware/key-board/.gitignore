@@ -9,3 +9,6 @@ out/*/gerbers/
 # Freerouting 2.5.0 (64 MB): copy it in, see README.md
 freerouting/
 !tests/data/*.ses
+# 3D models (17 MB) and the board STEP (9 MB): fetched/written by build.py --step
+footprints/lcsc.3dshapes/
+out/*/*.step

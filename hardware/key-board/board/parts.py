@@ -62,6 +62,20 @@ BODY = {"ESP32": (-7.7, -12.8, 7.7, 7.7),
 # The antenna strip of the module, in footprint coordinates (above the top pad row).
 ESP32_ANTENNA = (-7.7, -12.8, 7.7, -7.75)
 
+# 3D models (fetch_models.sh puts them in footprints/lcsc.3dshapes). Each EasyEDA footprint names its
+# model and carries its offset and rotation; parts whose footprint names none get one here.
+# WS2812B-2020-V6 (C52917434) has no EasyEDA model: the WS2812B-2020 one (C965555) is the same
+# 2.0 x 2.0 x 0.8 mm package, and its footprint has the same pin 1-4 layout as ours to within
+# 0.05 mm, with zero model offset and rotation.
+LCSC_3D = HERE / "footprints" / "lcsc.3dshapes"
+MODEL_OVERRIDE = {"LED": "LED-SMD_4P-L2.0-W2.0-H0.8-TL_WS2812B-2020"}
+# Model offsets (x, y, z in mm, KiCad's model frame) that replace easyeda2kicad's where its are
+# wrong, found from top and side renders: the SOT-23-6 and C0603 offsets push the bodies off their
+# pads, the JST model's origin is 2 mm off its centre, and the capacitor models are centred on
+# z = 0 (half inside the board), so they are lifted by half their height.
+MODEL_OFFSET = {"ESD": (0, 0, 0), "JST5": (-2.0, -0.33, 0),
+                "C10U": (0, 0, 0.4), "C100N": (0, 0, 0.25), "C1U": (0, 0, 0.25)}
+
 
 def _load(key, row):
     value, lcsc, fp_stem, sym, extended, rot = row
