@@ -11,8 +11,11 @@
 // 750 ms, and the challenge survives that, readable for up to PRESENCE_SAME_ACTION_GAP_MS after a
 // wait ends). It is single-use: one valid signature approves once. A cancel retires it.
 //
-// Any central may connect (no pairing yet), so a connection is dropped after 10 s whatever it's
-// doing, and two are allowed, so a squatter can't lock the watch out.
+// Bonding (CRYPT-19): the watch pairs (LE Secure Connections, Just Works) and bonds while enrolling,
+// and its identity address is kept as the one allowed peer. Every presence characteristic needs an
+// encrypted link, and the encrypted link must be that watch's: any other device that encrypts is
+// disconnected and its bond deleted. A connection is still dropped after 10 s, and two are allowed,
+// so a squatter can't lock the watch out.
 #pragma once
 
 #include <stdbool.h>
