@@ -145,7 +145,19 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   watch needs no change. Approved → NVS `ota/target`, switch slot, restart. **Probation:** a new image
   must pass `local_selftest` (NVS, micro-ecc sign/verify) and reach IoT Core within 120 s or it's rolled
   back (bootloader rollback; a crash rolls back too); the old image then reports `rolled back`.
-  `CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST` builds a deliberately failing image to test that.
+  `CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST` builds a deliberately failing image to test that
+  (`publish-ota.sh x.y.z --test-rollback`).
+  **RAM is the constraint** (the MINI-1-N8 has no PSRAM): with Wi-Fi, NimBLE and the MQTT TLS session up,
+  the largest free block after the S3 handshake was 13 KB, and mbedTLS needs ~16.7 KB for one S3 record.
+  So **BLE (host and controller) is paused for the download** (`ble_presence_suspend`, not during a
+  presence wait) and resumed before the approval: 109 KB free, largest block 31.7 KB. mbedTLS dynamic
+  buffers are on. esp_http_client's TX buffer is sized to the presigned URL (~3 KB with an STS token).
+  IoT Core redelivers commands whose PUBACK was slow during a download: a repeated URL is ignored (every
+  Fleet trigger presigns a new one). An `ota_cancel` sticks until the approval wait it's for ends, and
+  wins over a racing approval. **NVS is never erased** to get past an init error (counter, resident keys,
+  watch): a new image that can't read it rolls back. Failures report their cause (TLS error, errno,
+  heap) in `ota_error`, since the log is out of reach on the native port: for a serial log, swap to the
+  UART port (the OTA path doesn't need USB HID).
 - **Flash layout** (`partitions.csv`, fits 4 MB; the boards have 16 MB): `nvs` and `phy` at IDF's
   single-app offsets (so NVS survived the move), `otadata`, `prov`, two 1.875 MB app slots, coredump.
   Moving from the old single-app layout needs one wired flash (bootloader with rollback included).
