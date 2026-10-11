@@ -24,7 +24,11 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
 - **CTAP2 core is SoloKeys solo1** (Apache-2.0 OR MIT), a submodule in `embedded/third_party/solo1`; never
   copy its code into our CC0 tree. Ports override its `__attribute__((weak))` device hooks; the
   ESP32 `main` component is `WHOLE_ARCHIVE` so the strong ones always win.
-- **ESP32-S3 gotchas**: the key is on the *native* USB port, not the UART one. Short FreeRTOS waits
+- **ESP32-S3 gotchas**: the key is on the *native* USB port (the **left** one), not the UART one
+  (CH343, right). **The board only connects one USB port at a time**: whichever wins at power-up
+  enumerates and the other stays dark, which on 8 Oct looked like a string of charge-only cables.
+  To swap, unplug the one you don't want and power-cycle the board. Use UART for flashing and logs
+  (`flash-manual.sh`, after BOOT+RST; auto-reset doesn't work on macOS), native for CTAP tests. Short FreeRTOS waits
   need `CONFIG_FREERTOS_HZ=1000` (at 100 Hz `pdMS_TO_TICKS(1)` is 0, which once dropped every
   multi-packet CTAPHID reply). After flashing over the native port, press RST; a USB reset leaves
   it in download mode. `bootloader_random_enable()` feeds the RNG while no radio is on; call
@@ -73,6 +77,15 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   `{"default": "...", "APNS_SANDBOX": "<APNs payload as a JSON string>"}` (`APNS` in prod), with
   category `PRESENCE`. Measured on a real watch: publish → on the watch 1.3–2.4 s; SNS holds a
   message for 25–44 ms (`dwellTimeMs` in its delivery logs).
+- **Notifier firmware** (CRYPT-15, `esp32s3/main/notifier.c`, off unless `CONFIG_TINYCRYPT_NOTIFIER`):
+  Wi-Fi (no power saving), SNTP, and esp-mqtt held open to IoT Core with the key's own X.509
+  certificate. Each presence wait enqueues one publish (QoS 1, never blocks the CTAP task) in the SNS
+  message format; the BOOT button works regardless. `infra/scripts/provision-key.sh [key-N]` makes the
+  certificate and writes `esp32s3/certs/` and `esp32s3/sdkconfig.secrets` (Wi-Fi from SSM
+  `/Nakomis/Wifi/*`), both uncommitted; then `rm esp32s3/sdkconfig` and rebuild. Each key is an IoT
+  Thing (`TinycryptKeyStack`) whose policy allows connecting only as itself and publishing only presence
+  requests. INSECURE, TEST ONLY: that private key sits in flash; the ATECC608 replaces it. Measured on the
+  board: key publish → on the watch 1.3–1.5 s. The app partition is 1.75 MB for the network stack.
 - **Stale prompts**: an IoT SNS action can't set message attributes, so there's no
   `AWS.SNS.MOBILE.APNS.TTL`, and APNs may store a push for an offline watch and deliver it late. The
   real guard is the key: its BLE challenge is single-use and expires with the CTAP request, so a late

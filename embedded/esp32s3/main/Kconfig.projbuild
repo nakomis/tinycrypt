@@ -1,0 +1,35 @@
+menu "tinycrypt"
+
+config TINYCRYPT_NOTIFIER
+    bool "Send presence requests to the watch (Wi-Fi + MQTT to AWS IoT Core)"
+    default n
+    help
+        When the CTAP core asks for user presence, publish a request that IoT Core routes through
+        SNS and APNs to the watch. The BOOT button keeps working whatever happens to the network.
+        Needs certs/ and sdkconfig.secrets from infra/scripts/provision-key.sh.
+
+if TINYCRYPT_NOTIFIER
+
+config TINYCRYPT_WIFI_SSID
+    string "Wi-Fi SSID"
+
+config TINYCRYPT_WIFI_PASSWORD
+    string "Wi-Fi password"
+
+config TINYCRYPT_IOT_ENDPOINT
+    string "AWS IoT Core data endpoint (xxxx-ats.iot.<region>.amazonaws.com)"
+
+config TINYCRYPT_THING_NAME
+    string "IoT Thing name, also the MQTT client id"
+
+config TINYCRYPT_PRESENCE_TOPIC
+    string "MQTT topic for presence requests"
+    default "tinycrypt/sandbox/presence/request"
+
+config TINYCRYPT_APNS_PLATFORM
+    string "SNS message key for the APNs payload (APNS_SANDBOX for development watch builds, APNS for production)"
+    default "APNS_SANDBOX"
+
+endif
+
+endmenu
