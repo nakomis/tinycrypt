@@ -212,15 +212,8 @@ static bool button_down(void)
 //
 // Presence needs a fresh press: the button must be seen released after the
 // request starts, so a held or stuck button approves nothing.
-int ctap_user_presence_test(uint32_t delay_ms)
+static int wait_for_button(uint32_t delay_ms)
 {
-    if (up_disabled)
-        return 2;
-    ESP_LOGI(TAG, "user presence requested: press BOOT");
-#ifdef CONFIG_TINYCRYPT_NOTIFIER
-    // Ask the watch too. Best effort: the button below works whether or not this got out.
-    notifier_presence_request();
-#endif
     uint32_t start = millis();
     uint32_t next_keepalive = start;
     bool seen_released = false;
@@ -248,6 +241,23 @@ int ctap_user_presence_test(uint32_t delay_ms)
     }
     ESP_LOGI(TAG, "presence timed out");
     return 0;
+}
+
+int ctap_user_presence_test(uint32_t delay_ms)
+{
+    if (up_disabled)
+        return 2;
+    ESP_LOGI(TAG, "user presence requested: press BOOT");
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+    // Ask the watch too, once per user action. Best effort: the button works whether or not
+    // the request got out.
+    notifier_presence_wait_started();
+    int result = wait_for_button(delay_ms);
+    notifier_presence_wait_ended(result);
+    return result;
+#else
+    return wait_for_button(delay_ms);
+#endif
 }
 
 // ---- rng, counter, state (INSECURE: plain NVS) ------------------------------

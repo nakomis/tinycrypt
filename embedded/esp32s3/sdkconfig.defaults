@@ -14,3 +14,8 @@ CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 
 # 1 ms ticks: the port's short waits (pdMS_TO_TICKS(1..5)) are 0 at 100 Hz.
 CONFIG_FREERTOS_HZ=1000
+
+# Notifier (CRYPT-15): drop an unsent presence request after 10 s, so a reconnect can't deliver
+# a prompt for a CTAP request that has already timed out.
+CONFIG_MQTT_USE_CUSTOM_CONFIG=y
+CONFIG_MQTT_OUTBOX_EXPIRED_TIMEOUT_MS=10000

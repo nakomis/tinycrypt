@@ -10,8 +10,9 @@ export interface KeyStackProps extends cdk.StackProps {
 
 /**
  * CRYPT-15: each security key is an IoT Thing that may only connect as itself and publish presence
- * requests. Its certificate is made and attached by `infra/scripts/provision-key.sh`, not here: the
- * private key must never pass through CloudFormation (and moves onto the ATECC608 later).
+ * requests on its own topic, tinycrypt/{env}/presence/{thing}/request. Its certificate is made and
+ * attached by `infra/scripts/provision-key.sh`, not here: the private key must never pass through
+ * CloudFormation (and moves onto the ATECC608 later).
  */
 export class KeyStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props: KeyStackProps) {
@@ -36,7 +37,8 @@ export class KeyStack extends cdk.Stack {
                     {
                         Effect: 'Allow',
                         Action: 'iot:Publish',
-                        Resource: arn(`topic/tinycrypt/${deployEnv}/presence/request`),
+                        // Its own topic only, so a key can't pose as another.
+                        Resource: arn(`topic/tinycrypt/${deployEnv}/presence/\${iot:Connection.Thing.ThingName}/request`),
                     },
                 ],
             },

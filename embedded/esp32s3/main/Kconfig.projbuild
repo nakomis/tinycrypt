@@ -23,8 +23,7 @@ config TINYCRYPT_THING_NAME
     string "IoT Thing name, also the MQTT client id"
 
 config TINYCRYPT_PRESENCE_TOPIC
-    string "MQTT topic for presence requests"
-    default "tinycrypt/sandbox/presence/request"
+    string "MQTT topic for presence requests: tinycrypt/{env}/presence/{thing}/request"
 
 config TINYCRYPT_APNS_PLATFORM
     string "SNS message key for the APNs payload (APNS_SANDBOX for development watch builds, APNS for production)"

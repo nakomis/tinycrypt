@@ -26,7 +26,8 @@ export class PushStack extends cdk.Stack {
         super(scope, id, props);
         const { deployEnv } = props;
 
-        const requestTopic = `tinycrypt/${deployEnv}/presence/request`;
+        // One topic per key (tinycrypt/{env}/presence/{thing}/request); the rule takes them all.
+        const requestTopic = `tinycrypt/${deployEnv}/presence/+/request`;
 
         const topic = new sns.Topic(this, 'PresenceTopic', {
             topicName: `tinycrypt-presence-${deployEnv}`,
