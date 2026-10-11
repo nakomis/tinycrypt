@@ -186,8 +186,10 @@ void ota_on_connected(void)
     size_t len = sizeof(target), slot_len = sizeof(slot);
     if (!nvs_ok || nvs_get_str(nvs, NVS_TARGET, target, &len) != ESP_OK)
         return;
-    nvs_get_str(nvs, NVS_TARGET_SLOT, slot, &slot_len);
-    if (strcmp(target, running_version()) == 0 && strcmp(slot, esp_ota_get_running_partition()->label) == 0)
+    // An install by firmware older than 0.2.12 recorded no slot: then the version alone decides.
+    bool slot_known = nvs_get_str(nvs, NVS_TARGET_SLOT, slot, &slot_len) == ESP_OK;
+    if (strcmp(target, running_version()) == 0 &&
+        (!slot_known || strcmp(slot, esp_ota_get_running_partition()->label) == 0))
     {
         cJSON *msg = message("ota_complete");
         cJSON_AddStringToObject(msg, "version", target);
