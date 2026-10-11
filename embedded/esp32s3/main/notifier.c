@@ -46,6 +46,10 @@ static volatile bool mqtt_connected;
 // and sent as soon as MQTT connects, if its wait is still running.
 static portMUX_TYPE pending_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool pending;
+// The request a push is for, copied in the CTAP task when its wait starts (under pending_lock):
+// the MQTT task may send a held push while the next wait is rewriting presence's own copy.
+static char held_rp[PRESENCE_RP_MAX];
+static uint8_t held_hash[PRESENCE_REQUEST_HASH_LEN];
 // Before the first connection the LED says "connecting", and "offline" once it has connected
 // before or CONNECT_DEADLINE_MS has passed without a connection (bad credentials, AP down).
 static volatile bool ever_connected;
@@ -255,18 +259,37 @@ static void send_request(void)
         snprintf(&id[2 * i], 3, "%02x", raw[i]);
     int64_t sent_at = epoch_ms();
 
-    // TODO(BLE firmware): add a hash of the CTAP request, bound into the BLE challenge, so a late
-    // or replayed push can't approve a different request.
+    // The request this push is for (CRYPT-18): the watch only signs a BLE challenge carrying the
+    // same hash, and shows the site so you know what you're approving. presence only binds a site
+    // that is a plain host name, so it can go into the alert as it is.
+    char rp[PRESENCE_RP_MAX];
+    uint8_t hash[PRESENCE_REQUEST_HASH_LEN];
+    taskENTER_CRITICAL(&pending_lock);
+    memcpy(rp, held_rp, sizeof(rp));
+    memcpy(hash, held_hash, sizeof(hash));
+    taskEXIT_CRITICAL(&pending_lock);
+    char req[2 * PRESENCE_REQUEST_HASH_LEN + 1];
+    for (int i = 0; i < PRESENCE_REQUEST_HASH_LEN; i++)
+        snprintf(&req[2 * i], 3, "%02x", hash[i]);
+    char body[PRESENCE_RP_MAX + 32];
+    if (rp[0])
+        snprintf(body, sizeof(body), "Sign in to %s?", rp);
+    else
+        snprintf(body, sizeof(body), "Your security key wants approval");
+
     cJSON *apns = cJSON_CreateObject();
     cJSON *aps = cJSON_AddObjectToObject(apns, "aps");
     cJSON *alert = cJSON_AddObjectToObject(aps, "alert");
     cJSON_AddStringToObject(alert, "title", "Sign in?");
-    cJSON_AddStringToObject(alert, "body", "Your security key wants approval");
+    cJSON_AddStringToObject(alert, "body", body);
     cJSON_AddStringToObject(aps, "category", "PRESENCE");
     cJSON_AddStringToObject(aps, "sound", "default");
     cJSON *tc = cJSON_AddObjectToObject(apns, "tc");
     cJSON_AddStringToObject(tc, "id", id);
     cJSON_AddStringToObject(tc, "key", CONFIG_TINYCRYPT_THING_NAME);
+    cJSON_AddStringToObject(tc, "req", req);
+    if (rp[0])
+        cJSON_AddStringToObject(tc, "rp", rp);
     if (sent_at)
         cJSON_AddNumberToObject(tc, "sentAt", (double)sent_at);
     char *apns_text = cJSON_PrintUnformatted(apns);
@@ -296,9 +319,18 @@ static void send_request(void)
 
 void notifier_presence_wait_started(void)
 {
+    // Only a request the watch can approve gets a push (presence.h); anything else is button only.
+    if (!presence_request_bound())
+        return;
     // One push per user action (presence.h): U2F's 750 ms re-asks don't each buzz the watch.
     if (presence_is_new_action())
+    {
+        taskENTER_CRITICAL(&pending_lock);
+        memcpy(held_rp, presence_request_rp(), sizeof(held_rp));
+        memcpy(held_hash, presence_request_hash(), sizeof(held_hash));
+        taskEXIT_CRITICAL(&pending_lock);
         send_request();
+    }
 }
 
 void notifier_presence_wait_ended(void)

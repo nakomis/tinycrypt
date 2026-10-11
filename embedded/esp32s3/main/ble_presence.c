@@ -18,13 +18,19 @@
 #include "uECC.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
+#include "store/config/ble_store_config.h"
+
+// Not in the public header; Espressif's own examples declare it like this.
+void ble_store_config_init(void);
 
 static const char *TAG = "ble-presence";
 
-#define DOMAIN_TAG "tinycrypt-presence-v0"
+// Protocol v1 (CRYPT-18): the challenge carries the request hash, so a signature approves only the
+// request it was made for.
+#define DOMAIN_TAG "tinycrypt-presence-v1"
 #define DOMAIN_LEN (sizeof(DOMAIN_TAG) - 1)
 #define NONCE_LEN 32
-#define CHALLENGE_LEN (DOMAIN_LEN + NONCE_LEN)
+#define CHALLENGE_LEN (DOMAIN_LEN + NONCE_LEN + PRESENCE_REQUEST_HASH_LEN)
 // An unapproved challenge outlives its wait by this long, so a U2F re-ask can still use it.
 #define SAME_ACTION_GAP_US ((int64_t)PRESENCE_SAME_ACTION_GAP_MS * 1000)
 // Any connection is dropped after this long: an approval takes under 2 s.
@@ -32,6 +38,7 @@ static const char *TAG = "ble-presence";
 #define TELEMETRY_LOG_MAX 160
 #define NVS_NAMESPACE "tinycrypt"
 #define NVS_WATCH_KEY "watch_pub"
+#define NVS_PEER_KEY "watch_peer"  // the bonded watch's BLE identity address
 
 static ble_uuid_any_t svc_uuid, challenge_uuid, response_uuid, enrol_uuid, telemetry_uuid;
 
@@ -47,6 +54,8 @@ static esp_timer_handle_t enrol_timer;
 
 static uint8_t watch_pub[TINYCRYPT_P256_PUB_LEN];
 static bool have_watch;
+static ble_addr_t watch_peer;
+static bool have_peer;
 
 static uint8_t own_addr_type;
 
@@ -57,6 +66,16 @@ static void advertise(void);
 static void arm(void *ctx)
 {
     (void)ctx;
+    if (!presence_request_bound())
+    {
+        // Not a request the watch can be told about unambiguously (presence.h): button only.
+        taskENTER_CRITICAL(&lock);
+        challenge_live = false;
+        approved = false;
+        taskEXIT_CRITICAL(&lock);
+        ESP_LOGW(TAG, "request not bound: watch not offered, press the button");
+        return;
+    }
     uint8_t nonce[NONCE_LEN];
     esp_fill_random(nonce, sizeof(nonce));  // outside the critical section
     taskENTER_CRITICAL(&lock);
@@ -65,6 +84,7 @@ static void arm(void *ctx)
     {
         memcpy(challenge, DOMAIN_TAG, DOMAIN_LEN);
         memcpy(challenge + DOMAIN_LEN, nonce, NONCE_LEN);
+        memcpy(challenge + DOMAIN_LEN + NONCE_LEN, presence_request_hash(), PRESENCE_REQUEST_HASH_LEN);
         challenge_live = true;
         approved = false;
     }
@@ -116,6 +136,42 @@ static void expire_challenge(void)
     taskEXIT_CRITICAL(&lock);
 }
 
+// ---- which connections may use the presence service -----------------------------
+
+#define SLOTS CONFIG_BT_NIMBLE_MAX_CONNECTIONS
+#define NO_CONN 0xffff
+static uint16_t allowed_conn[SLOTS] = {[0 ... SLOTS - 1] = NO_CONN};
+
+static bool conn_allowed(uint16_t conn)
+{
+    for (int i = 0; i < SLOTS; i++)
+        if (allowed_conn[i] == conn)
+            return true;
+    return false;
+}
+
+static void allow_conn(uint16_t conn, bool allow)
+{
+    for (int i = 0; i < SLOTS; i++)
+    {
+        if (allow && allowed_conn[i] == NO_CONN)
+        {
+            allowed_conn[i] = conn;
+            return;
+        }
+        if (!allow && allowed_conn[i] == conn)
+            allowed_conn[i] = NO_CONN;
+    }
+}
+
+static bool enrol_open(void)
+{
+    taskENTER_CRITICAL(&lock);
+    bool open = esp_timer_get_time() <= enrol_until_us;
+    taskEXIT_CRITICAL(&lock);
+    return open;
+}
+
 // ---- enrolment ---------------------------------------------------------------
 
 static void enrol_window_closed(void *arg)
@@ -149,12 +205,9 @@ bool ble_presence_enrolled(void)
     return have_watch;
 }
 
-static int enrol(const uint8_t *pub, size_t len)
+static int enrol(uint16_t conn, const uint8_t *pub, size_t len)
 {
-    taskENTER_CRITICAL(&lock);
-    bool open = esp_timer_get_time() <= enrol_until_us;
-    taskEXIT_CRITICAL(&lock);
-    if (!open)
+    if (!enrol_open())
     {
         ESP_LOGW(TAG, "enrol refused: hold the button 5 s to open the enrol window");
         return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
@@ -166,10 +219,22 @@ static int enrol(const uint8_t *pub, size_t len)
         ESP_LOGW(TAG, "enrol refused: not a point on P-256");
         return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
     }
+    // The link is encrypted (the characteristic demands it), so this connection has just bonded:
+    // its identity address becomes the one allowed peer, and any previous watch's bond goes.
+    struct ble_gap_conn_desc desc;
+    if (ble_gap_conn_find(conn, &desc) != 0 || !desc.sec_state.encrypted || !desc.sec_state.bonded)
+    {
+        ESP_LOGW(TAG, "enrol refused: the link isn't bonded");
+        return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
+    }
+    if (have_peer && ble_addr_cmp(&watch_peer, &desc.peer_id_addr) != 0)
+        ble_store_util_delete_peer(&watch_peer);
     nvs_handle_t nvs;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK)
         return BLE_ATT_ERR_UNLIKELY;
     esp_err_t err = nvs_set_blob(nvs, NVS_WATCH_KEY, pub, len);
+    if (err == ESP_OK)
+        err = nvs_set_blob(nvs, NVS_PEER_KEY, &desc.peer_id_addr, sizeof(desc.peer_id_addr));
     if (err == ESP_OK)
         err = nvs_commit(nvs);
     nvs_close(nvs);
@@ -177,6 +242,9 @@ static int enrol(const uint8_t *pub, size_t len)
         return BLE_ATT_ERR_UNLIKELY;
     memcpy(watch_pub, pub, len);
     have_watch = true;
+    watch_peer = desc.peer_id_addr;
+    have_peer = true;
+    allow_conn(conn, true);
     taskENTER_CRITICAL(&lock);
     enrol_until_us = 0;  // one watch per window
     taskEXIT_CRITICAL(&lock);
@@ -228,11 +296,18 @@ static int respond(const uint8_t *sig, size_t len)
 
 static int gatt_access(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    (void)conn;
     (void)attr;
     (void)arg;
     expire_challenge();
     const ble_uuid_t *uuid = ctxt->chr->uuid;
+
+    // Enrolment has its own gate (the enrol window); everything else is for the enrolled watch only.
+    bool enrolling = ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR && ble_uuid_cmp(uuid, &enrol_uuid.u) == 0;
+    if (!enrolling && !conn_allowed(conn))
+    {
+        ESP_LOGW(TAG, "refused: connection %u isn't the enrolled watch", conn);
+        return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
+    }
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR)
     {
@@ -261,8 +336,8 @@ static int gatt_access(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt
         return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
     if (ble_uuid_cmp(uuid, &response_uuid.u) == 0)
         return respond(buf, len);
-    if (ble_uuid_cmp(uuid, &enrol_uuid.u) == 0)
-        return enrol(buf, len);
+    if (enrolling)
+        return enrol(conn, buf, len);
     if (ble_uuid_cmp(uuid, &telemetry_uuid.u) == 0)
     {
         // Unauthenticated: log it truncated and printable only, clearly marked as the peer's words.
@@ -278,10 +353,11 @@ static int gatt_access(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt
 }
 
 static struct ble_gatt_chr_def characteristics[] = {
-    {.uuid = &challenge_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_READ},
-    {.uuid = &response_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_WRITE},
-    {.uuid = &enrol_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_WRITE},
-    {.uuid = &telemetry_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_WRITE},
+    // All need an encrypted link; the watch pairs and bonds on its first access, at enrolment.
+    {.uuid = &challenge_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC},
+    {.uuid = &response_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC},
+    {.uuid = &enrol_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC},
+    {.uuid = &telemetry_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC},
     {0},
 };
 
@@ -346,8 +422,44 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         // lock the watch out.
         advertise();
         break;
+    case BLE_GAP_EVENT_ENC_CHANGE:
+    {
+        struct ble_gap_conn_desc desc;
+        uint16_t conn = event->enc_change.conn_handle;
+        if (event->enc_change.status != 0 || ble_gap_conn_find(conn, &desc) != 0)
+        {
+            ESP_LOGW(TAG, "encryption failed on connection %u (status %d)", conn, event->enc_change.status);
+            break;
+        }
+        bool is_watch = have_peer && ble_addr_cmp(&desc.peer_id_addr, &watch_peer) == 0;
+        if (is_watch)
+        {
+            allow_conn(conn, true);
+            ESP_LOGI(TAG, "enrolled watch connected, link encrypted");
+        }
+        else if (enrol_open())
+            ESP_LOGI(TAG, "a central bonded during the enrol window; waiting for its key");
+        else
+        {
+            // Bonded with us outside the enrol window: not ours. Forget it and hang up.
+            ESP_LOGW(TAG, "unknown central bonded outside the enrol window: dropped");
+            ble_store_util_delete_peer(&desc.peer_id_addr);
+            ble_gap_terminate(conn, BLE_ERR_AUTH_FAIL);
+        }
+        break;
+    }
+    case BLE_GAP_EVENT_REPEAT_PAIRING:
+    {
+        // A peer we hold a bond for wants to pair again (it lost its keys). Only while enrolling.
+        struct ble_gap_conn_desc desc;
+        if (!enrol_open() || ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc) != 0)
+            return BLE_GAP_REPEAT_PAIRING_IGNORE;
+        ble_store_util_delete_peer(&desc.peer_id_addr);
+        return BLE_GAP_REPEAT_PAIRING_RETRY;
+    }
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "central disconnected (reason 0x%x)", event->disconnect.reason);
+        allow_conn(event->disconnect.conn.conn_handle, false);
         led_status_set(LED_WATCH_SIGNING, false);
         connection_closed(event->disconnect.conn.conn_handle);
         advertise();
@@ -420,6 +532,8 @@ bool ble_presence_start(void)
     {
         size_t len = sizeof(watch_pub);
         have_watch = nvs_get_blob(nvs, NVS_WATCH_KEY, watch_pub, &len) == ESP_OK && len == sizeof(watch_pub);
+        len = sizeof(watch_peer);
+        have_peer = nvs_get_blob(nvs, NVS_PEER_KEY, &watch_peer, &len) == ESP_OK && len == sizeof(watch_peer);
         nvs_close(nvs);
     }
 
@@ -436,6 +550,14 @@ bool ble_presence_start(void)
     }
     ble_hs_cfg.sync_cb = on_sync;
     ble_hs_cfg.reset_cb = on_reset;
+    // LE Secure Connections, Just Works (the key has no display or keypad), bonded.
+    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
+    ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT;
+    ble_hs_cfg.sm_bonding = 1;
+    ble_hs_cfg.sm_mitm = 0;
+    ble_hs_cfg.sm_sc = 1;
+    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_svc_gap_init();
     ble_svc_gatt_init();
     if (ble_gatts_count_cfg(services) != 0 || ble_gatts_add_svcs(services) != 0)
@@ -444,6 +566,9 @@ bool ble_presence_start(void)
         return true;  // the controller (and so the radio's entropy) is up
     }
     ble_svc_gap_device_name_set("tinycrypt");
+    ble_store_config_init();
     nimble_port_freertos_init(host_task);
+    if (have_watch && !have_peer)
+        ESP_LOGW(TAG, "watch enrolled before bonding existed: hold BOOT 5 s and enrol it again");
     return true;
 }

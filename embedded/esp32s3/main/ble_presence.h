@@ -1,8 +1,8 @@
 // Watch presence over BLE (CRYPT-13): the key is the GATT peripheral, the watch the central.
 //
-// GATT protocol v0, as the watch app speaks it (watch/TinycryptWatch/Sources/PresenceProtocol.swift):
+// GATT protocol v1, as the watch app speaks it (watch/TinycryptWatch/Sources/PresenceProtocol.swift):
 //   service    30CCC4F1-350D-4FDF-89C5-6120E2CC5044
-//   challenge  read   "tinycrypt-presence-v0" || nonce(32); only while a presence wait is armed
+//   challenge  read   "tinycrypt-presence-v1" || nonce(32) || request hash(32) (CRYPT-18; v0 had no hash)
 //   response   write  r||s (64): the watch Secure Enclave's signature over SHA-256(challenge)
 //   enrol      write  X||Y (64): the watch's public key; only while the enrol window is open
 //   telemetry  write  timing JSON from the watch, logged
@@ -11,8 +11,11 @@
 // 750 ms, and the challenge survives that, readable for up to PRESENCE_SAME_ACTION_GAP_MS after a
 // wait ends). It is single-use: one valid signature approves once. A cancel retires it.
 //
-// Any central may connect (no pairing yet), so a connection is dropped after 10 s whatever it's
-// doing, and two are allowed, so a squatter can't lock the watch out.
+// Bonding (CRYPT-19): the watch pairs (LE Secure Connections, Just Works) and bonds while enrolling,
+// and its identity address is kept as the one allowed peer. Every presence characteristic needs an
+// encrypted link, and the encrypted link must be that watch's: any other device that encrypts is
+// disconnected and its bond deleted. A connection is still dropped after 10 s, and two are allowed,
+// so a squatter can't lock the watch out.
 #pragma once
 
 #include <stdbool.h>

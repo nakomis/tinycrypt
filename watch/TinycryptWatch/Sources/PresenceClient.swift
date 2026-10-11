@@ -23,6 +23,9 @@ final class PresenceClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
 
     private let mode: Mode
     private let preferredRoute: Route
+    /// The request hash from the push that was tapped; the challenge must carry the same one.
+    /// nil only for the app's own test notifications ("Arm in 10 s"), which have no request.
+    private let expectedRequest: Data?
     private let start: ContinuousClock.Instant
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
@@ -31,9 +34,11 @@ final class PresenceClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     private var continuation: CheckedContinuation<PresenceReport, Never>?
     private var finished = false
 
-    init(mode: Mode, route: Route, start: ContinuousClock.Instant, context: [String: String]) {
+    init(mode: Mode, route: Route, start: ContinuousClock.Instant, context: [String: String],
+         expectedRequest: Data? = nil) {
         self.mode = mode
         self.preferredRoute = route
+        self.expectedRequest = expectedRequest
         self.start = start
         self.report = PresenceReport(mode: mode.rawValue, context: context)
     }
@@ -158,10 +163,14 @@ final class PresenceClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         if let error { return finish(error: "challenge read: \(error.localizedDescription)") }
         mark("challengeRead")
         let challenge = characteristic.value ?? Data()
-        // Sign only a well-formed presence challenge, never arbitrary bytes.
-        guard challenge.count == PresenceProtocol.domainTag.count + PresenceProtocol.nonceLength,
+        // Sign only a well-formed presence challenge, never arbitrary bytes...
+        guard challenge.count == PresenceProtocol.challengeLength,
               challenge.starts(with: PresenceProtocol.domainTag) else {
             return finish(error: "malformed challenge (\(challenge.count) bytes)")
+        }
+        // ...and only for the request whose push was tapped: an approval can't drift to another.
+        if let expectedRequest, challenge.suffix(PresenceProtocol.requestHashLength) != expectedRequest {
+            return finish(error: "challenge is for a different request: not signed")
         }
         guard let response = chars[PresenceProtocol.response] else { return finish(error: "no response characteristic") }
         do {
