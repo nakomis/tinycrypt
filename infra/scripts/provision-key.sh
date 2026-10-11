@@ -7,13 +7,15 @@
 # --new retires the Thing's existing certificates (detach, deactivate, delete) and makes a fresh one;
 # use it if a key's private key may have leaked.
 #
-# Writes, never committed, under embedded/esp32s3/:
-#   certs/<thing>/device.pem.crt, device.pem.key, certificate-arn; certs/AmazonRootCA1.pem
-#   sdkconfig.secrets   Wi-Fi, IoT endpoint, Thing name, topic and APNs platform for the firmware
+# Writes, never committed, under embedded/esp32s3/certs/<thing>/:
+#   device.pem.crt, device.pem.key, certificate-arn
+#   prov.bin   the key's prov partition (CRYPT-14): Wi-Fi, IoT endpoint, Thing name, topic, APNs
+#              platform, certificate and private key. flash-manual.sh writes it alongside the app;
+#              none of it is in the firmware image, so every key runs the same (published) image.
 #
 # INSECURE, TEST ONLY: the private key is made here and flashed in plain text, and the Wi-Fi password
-# ends up in the build's sdkconfig and firmware image. The real key keeps its private key on the
-# ATECC608 and only ever sends AWS a CSR.
+# sits in prov.bin and the key's flash. The real key keeps its private key on the ATECC608 and only
+# ever sends AWS a CSR.
 #
 # Needs AWS_PROFILE (default nakom.is-sandbox) and NPM_ENVIRONMENT (default sandbox). The house
 # Wi-Fi credentials are read from /Nakomis/Wifi/* (as catcam does), via WIFI_PROFILE (default AWS_PROFILE).
@@ -76,9 +78,6 @@ aws iot attach-thing-principal --thing-name "$thing" --principal "$cert_arn"
 status=$(aws iot describe-certificate --certificate-id "${cert_arn##*/}" --query certificateDescription.status --output text)
 [ "$status" = ACTIVE ] || { echo "certificate ${cert_arn##*/} is ${status}: rerun with --new" >&2; exit 1; }
 
-ca="${fw}/certs/AmazonRootCA1.pem"
-[ -s "$ca" ] || curl -fsS -o "$ca" https://www.amazontrust.com/repository/AmazonRootCA1.pem
-
 endpoint=$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)
 # Through the environment, not argv, so the password never shows up in `ps`.
 export TC_SSID TC_PASSWORD
@@ -86,29 +85,35 @@ TC_SSID=$(aws ssm get-parameter --profile "$wifi_profile" --name /Nakomis/Wifi/S
 TC_PASSWORD=$(aws ssm get-parameter --profile "$wifi_profile" --name /Nakomis/Wifi/Password --with-decryption \
     --query Parameter.Value --output text)
 
-python3 - "$fw/sdkconfig.secrets" "$endpoint" "$thing" "$env" "$platform" <<'PY'
-import json, os, sys
-path, endpoint, thing, env, platform = sys.argv[1:]
+IDF_PATH="${IDF_PATH:-$HOME/esp/v5.5/esp-idf}"
+# shellcheck disable=SC1091
+. "$IDF_PATH/export.sh" > /dev/null 2>&1   # for its Python, which has the NVS partition generator
+trap 'rm -P "${dir}/prov.csv" 2> /dev/null || true' EXIT   # it holds the Wi-Fi password
+prov_size=$(awk -F', *' '$1 == "prov" { print $5 }' "${fw}/partitions.csv")
+python3 - "$dir" "$endpoint" "$thing" "$env" "$platform" <<'PY'
+import csv, os, sys
+d, endpoint, thing, env, platform = sys.argv[1:]
 ssid, password = os.environ["TC_SSID"], os.environ["TC_PASSWORD"]
 if len(ssid.encode()) > 32 or len(password.encode()) > 63:
     sys.exit("Wi-Fi SSID or password too long for ESP-IDF (32 / 63 bytes)")
-
-def q(value):
-    # Kconfig strings take C escapes (\" and \\), which JSON's match; keep UTF-8 as is, since Kconfig
-    # has no \u escapes.
-    return json.dumps(value, ensure_ascii=False)
-
-lines = [
-    "# Written by infra/scripts/provision-key.sh. Not committed: holds the Wi-Fi password.",
-    "CONFIG_TINYCRYPT_NOTIFIER=y",
-    f"CONFIG_TINYCRYPT_WIFI_SSID={q(ssid)}",
-    f"CONFIG_TINYCRYPT_WIFI_PASSWORD={q(password)}",
-    f"CONFIG_TINYCRYPT_IOT_ENDPOINT={q(endpoint)}",
-    f"CONFIG_TINYCRYPT_THING_NAME={q(thing)}",
-    f"CONFIG_TINYCRYPT_PRESENCE_TOPIC={q(f'tinycrypt/{env}/presence/{thing}/request')}",
-    f"CONFIG_TINYCRYPT_APNS_PLATFORM={q(platform)}",
+# Keys and sizes as embedded/esp32s3/main/prov.c reads them.
+rows = [
+    ("tinycrypt", "namespace", "", ""),
+    ("wifi_ssid", "data", "string", ssid),
+    ("wifi_pass", "data", "string", password),
+    ("endpoint", "data", "string", endpoint),
+    ("thing", "data", "string", thing),
+    ("topic", "data", "string", f"tinycrypt/{env}/presence/{thing}/request"),
+    ("apns", "data", "string", platform),
+    ("cert", "file", "string", os.path.join(d, "device.pem.crt")),
+    ("key", "file", "string", os.path.join(d, "device.pem.key")),
 ]
-open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+with open(os.path.join(d, "prov.csv"), "w", newline="", encoding="utf-8") as f:
+    w = csv.writer(f)
+    w.writerow(("key", "type", "encoding", "value"))
+    w.writerows(rows)
 PY
-echo "wrote ${fw}/sdkconfig.secrets for ${thing} (${endpoint})"
-echo "rebuild with a clean sdkconfig so the new values apply: rm embedded/esp32s3/sdkconfig"
+python -m esp_idf_nvs_partition_gen generate "${dir}/prov.csv" "${dir}/prov.bin" "$prov_size" > /dev/null
+# Settings once went into the build (CRYPT-15); nothing reads this any more, and it holds the password.
+[ -f "${fw}/sdkconfig.secrets" ] && rm -P "${fw}/sdkconfig.secrets"
+echo "wrote ${dir}/prov.bin for ${thing} (${endpoint}); flash it with esp32s3/flash-manual.sh <port> ${thing}"

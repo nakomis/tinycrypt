@@ -1,7 +1,13 @@
-# Name,   Type, SubType,  Offset,  Size
-# nvs/phy match IDF's single-app default, so existing NVS data survives. factory is 1.75 MB for
-# Wi-Fi + TLS + MQTT (CRYPT-15) and still fits a 2 MB flash with the core dump.
-nvs,      data, nvs,      0x9000,  0x6000
-phy_init, data, phy,      0xf000,  0x1000
-factory,  app,  factory,  0x10000, 1792K
-coredump, data, coredump, ,        64K
+# Name,   Type, SubType,  Offset,   Size
+# nvs/phy stay exactly where IDF's single-app default put them, so existing NVS data (sign counter,
+# resident keys, the enrolled watch, BLE bonds) survives the move to OTA (CRYPT-14).
+# prov holds this key's settings and IoT credentials (infra/scripts/provision-key.sh), so every key
+# runs the same image and a published image holds no secrets. Two 1.875 MB app slots for OTA with
+# rollback; the whole table fits a 4 MB flash.
+nvs,      data, nvs,      0x9000,   0x6000
+phy_init, data, phy,      0xf000,   0x1000
+otadata,  data, ota,      0x10000,  0x2000
+prov,     data, nvs,      0x12000,  0x6000
+ota_0,    app,  ota_0,    0x20000,  1920K
+ota_1,    app,  ota_1,    0x200000, 1920K
+coredump, data, coredump, 0x3E0000, 64K

@@ -19,3 +19,10 @@ void notifier_presence_wait_started(void);
 
 // Call as each presence wait ends: drops a request still held for a connection.
 void notifier_presence_wait_ended(void);
+
+// Publishes a Fleet response (JSON) on tinycrypt/<thing>/responses at QoS 1. Queued for the MQTT
+// task; false (and dropped) if not connected.
+bool notifier_respond(const char *json);
+
+// This key's Thing name ("" until notifier_start has read the prov partition).
+const char *notifier_thing_name(void);
