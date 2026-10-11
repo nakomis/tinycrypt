@@ -31,6 +31,8 @@ ATtiny85 / U2F experiments live on the [`spike`](https://github.com/nakomis/tiny
 
 ## How it fits together
 
+![tinycrypt architecture](docs/architecture/tinycrypt.svg)
+
 1. The browser asks the key (USB HID, CTAP2) for a WebAuthn assertion.
 2. The key sends an approval request: AWS IoT Core → SNS → APNs → actionable watch notification (about 2 s).
 3. You tap **Approve**; the watch connects to the key over BLE and signs a fresh nonce with its Secure Enclave key.
