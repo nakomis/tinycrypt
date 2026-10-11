@@ -6,6 +6,7 @@
 //   online, idle        off                         (one green blink when it first connects)
 //   offline             short amber blink every 3 s (the button still works)
 //   presence wanted     blue, pulsing               ("touch me, or approve on the watch")
+//   update waiting      amber, pulsing              (approve an update: same press or watch, CRYPT-21)
 //   watch signing       white, fast flicker         (a watch read the challenge)
 //   approved            green, 1 s                  (one-shot)
 //   not given           red, 1 s                    (timed out, cancelled; one-shot)
@@ -23,6 +24,7 @@ typedef enum
     LED_CONNECTING,
     LED_OFFLINE,
     LED_PRESENCE,
+    LED_UPDATE,
     LED_WATCH_SIGNING,
     LED_ENROL_OPEN,
     LED_FAULT,
