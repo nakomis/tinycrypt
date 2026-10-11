@@ -36,21 +36,36 @@ def test_kicad_parses_unrouted_key_board(tmp_path):
     assert [v for v in drc["violations"] if v["type"] in BAD] == []
 
 
-def test_two_layer_gnd_zones_and_antenna_keepout(tmp_path):
+def test_two_layer_gnd_pours_and_no_rule_area(tmp_path):
     _, _, pcb = _key(tmp_path)
     tree = parse(pcb.read_text())
     cu = [l[1] for l in find(tree, "layers")[1:] if l[2] in ("signal", "power")]
     assert cu == ["F.Cu", "B.Cu"]
     zones = find_all(tree, "zone")
-    pours = [(find(z, "net_name")[1], find(z, "layer")[1]) for z in zones if find(z, "keepout") is None]
-    assert pours == [("GND", "F.Cu"), ("GND", "B.Cu")]
-    keep = [z for z in zones if find(z, "keepout") is not None]
+    assert [(find(z, "net_name")[1], find(z, "layer")[1]) for z in zones] == [("GND", "F.Cu"), ("GND", "B.Cu")]
+
+
+def test_keepout_rule_area_written(tmp_path):
+    c = kb.build_key()
+    pl = kb.place_key(c)
+    pcb = tmp_path / "k.kicad_pcb"
+    write_board(c, pl, pcb, layers=2, keepouts=[("band", [(0, 0), (21, 0), (21, 1), (0, 1)], ("F.Cu", "B.Cu"))])
+    keep = [z for z in find_all(parse(pcb.read_text()), "zone") if find(z, "keepout") is not None]
     assert len(keep) == 1 and find(keep[0], "layers")[1:] == ["F.Cu", "B.Cu"]
     rules = {r[0]: r[1] for r in find(keep[0], "keepout")[1:]}
     assert rules == {"tracks": "not_allowed", "vias": "not_allowed", "pads": "not_allowed",
                      "copperpour": "not_allowed", "footprints": "allowed"}
-    ys = [xy[2] for xy in find_all(find(find(keep[0], "polygon"), "pts"), "xy")]
-    assert min(ys) == 0.0 and abs(max(ys) - kb.ANT_Y) < 1e-9
+
+
+def test_pad_extras_and_fab_note_written(tmp_path):
+    notes, rects = kb.fab_notes()
+    _, _, pcb = _key(tmp_path, pad_extra=kb.pad_extra(), user_rects=rects)
+    text = pcb.read_text()
+    assert text.count("(solder_paste_margin -0.18)") == 9 and text.count("(zone_connect 2)") == 5
+    tree = parse(text)
+    r = [g for g in find_all(tree, "gr_rect") if find(g, "layer")[1] == "Dwgs.User"]
+    assert len(r) == 1 and abs(find(r[0], "start")[2] - kb.ANTENNA) < 1e-9
+    assert "INTENTIONAL" in notes[0][0] and notes[0][4] == "Dwgs.User"
 
 
 def test_bad_layer_count(tmp_path):
@@ -104,7 +119,7 @@ def test_back_text_is_mirrored_and_front_text_is_not(tmp_path):
     assert {t[1] for t in back} == {"Mu", kb.CREDIT, kb.TITLE}
     assert all(find(find(t, "effects"), "justify") == ["justify", "mirror"] for t in back)
     assert all(find(find(t, "effects"), "justify") is None for t in front)
-    assert {"V", "D-", "D+", "CC", "G", "RX", "TX", "3V3", "BTN"} <= {t[1] for t in front}
+    assert {"V", "D-", "D+", "CC", "G", "EN", "RX", "TX", "3V3", "BTN"} <= {t[1] for t in front}
 
 
 def test_module_silk_pulled_inside_the_edge(tmp_path):

@@ -43,7 +43,7 @@ def test_key_bom_has_every_assembled_part_and_no_board_only_ones(tmp_path):
     assert sorted(refs) == sorted(set(C.instances) - BOARD_ONLY)
     assert all(row["LCSC Part #"].startswith("C") for row in rows)
     lcsc = {row["LCSC Part #"] for row in rows}
-    assert {"C2913206", "C1518769", "C265419", "C7519", "C51118", "C318884", "C52917434"} <= lcsc
+    assert {"C2913206", "C1518769", "C265419", "C7519", "C51118", "C318884", "C52917434", "C25104"} <= lcsc
 
 
 def test_cpl_rotation_and_coordinates(tmp_path):
@@ -75,6 +75,14 @@ def test_cpl_matches_kicad_position_file(tmp_path):
         assert abs(float(r["Mid X"]) - float(want[ref]["PosX"])) < 0.01, ref
         assert abs(float(r["Mid Y"]) - float(want[ref]["PosY"])) < 0.01, ref
         assert abs((float(r["Rotation"]) - float(want[ref]["Rot"])) % 360) < 0.01, ref
+
+
+def test_u1_cpl_is_the_module_footprint_centre(tmp_path):
+    """JLCPCB places U1 by its footprint origin, the centre of the pad pattern, which the
+    antenna overhang does not move: x on the centre line, Mid Y the negated KiCad y."""
+    write_cpl(C, P, tmp_path / "cpl.csv")
+    u1 = next(r for r in csv.DictReader(open(tmp_path / "cpl.csv")) if r["Designator"] == "U1")
+    assert abs(float(u1["Mid X"]) - kb.W / 2) < 1e-6 and abs(float(u1["Mid Y"]) + kb.MOD_Y) < 1e-6
 
 
 def test_every_extended_part_has_a_checked_offset():

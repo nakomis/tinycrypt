@@ -10,7 +10,7 @@ FREEROUTING = Path(__file__).resolve().parent.parent / "freerouting" / "freerout
 
 
 def route(circuit, placement, workdir, passes=100, layers=4, log="/tmp/claude-501/key-board-route.log",
-          route_area=None, fixed_vias=(), fixed_tracks=(), via_keepouts=()):
+          route_area=None, fixed_vias=(), fixed_tracks=(), via_keepouts=(), layer_keepouts=(), skip_nets=()):
     """Write workdir/board.dsn, run Freerouting (-de/-do/-mp from its --help; the full output
     goes to 'log'), and return the (tracks, vias) read from workdir/board.ses."""
     workdir = Path(workdir)
@@ -18,7 +18,8 @@ def route(circuit, placement, workdir, passes=100, layers=4, log="/tmp/claude-50
     dsn, ses = workdir / "board.dsn", workdir / "board.ses"
     ses.unlink(missing_ok=True)
     write_dsn(circuit, placement, dsn, layers=layers, route_area=route_area, fixed_vias=fixed_vias,
-              fixed_tracks=fixed_tracks, via_keepouts=via_keepouts)
+              fixed_tracks=fixed_tracks, via_keepouts=via_keepouts, layer_keepouts=layer_keepouts,
+              skip_nets=skip_nets)
     with open(log, "w") as f:
         subprocess.run(["java", "-Djava.awt.headless=true", "-jar", str(FREEROUTING),
                         "-de", str(dsn), "-do", str(ses), "-mp", str(passes)],

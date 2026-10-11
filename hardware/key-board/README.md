@@ -18,8 +18,7 @@ mkdir -p freerouting && cp <somewhere>/freerouting-2.5.0.jar freerouting/   # Ja
 `build.py` writes `out/key/`: `tinycrypt-key.kicad_pcb`, `drc.json`, `bom.csv`, `cpl.csv`,
 `tinycrypt-key-gerbers.zip`, the top and bottom renders, and `pins.h`. It writes the fab files only
 when KiCad's DRC has no errors and no unconnected items (kicad-cli exits 0 even when DRC fails).
-Freerouting isn't deterministic, so each route differs slightly. Order with a **black** solder mask
-(white silkscreen).
+Freerouting isn't deterministic, but it now routes only BUTTON, LED_GPIO and LED_DIN, which are short.
 
 ## Pins (for the firmware)
 
@@ -30,25 +29,43 @@ Freerouting isn't deterministic, so each route differs slightly. Order with a **
 | Button (presence, download strap) | 0 | 4 |
 | USB D- / D+ | 19 / 20 | 23 / 24 |
 | ATECC608B SDA / SCL (4k7 pull-ups) | 38 / 21 | 34 / 25 |
-| WS2812B DIN | 17 | 21 |
+| WS2812B DIN (through 330R) | 17 | 21 |
 | UART0 TX / RX (debug pads) | 43 / 44 | 39 / 40 |
 
 J1 (JST-SH, viewed from the top with its opening facing you, pin 1 on the left):
-1 VBUS, 2 D-, 3 D+, 4 CC, 5 GND. Debug pads, from the antenna end: RX, TX, 3V3, GND.
+1 VBUS, 2 D-, 3 D+, 4 CC, 5 GND. Debug pads TP1, from the antenna end: **EN, RX, TX, G, 3V3**.
+Bridge EN to G to reset the chip.
+
+## Ordering (JLCPCB)
+
+- **ENIG** finish, **black** solder mask, white silkscreen.
+- Edge rails on the **long sides only**, joined with **mouse-bite tabs, not V-cut**.
+- The module's antenna **overhangs the board edge by 5.05 mm on purpose** (marked on Dwgs.User).
+- Check the rotations of J1, D1, U1, U2, U3 and U4 in JLCPCB's placement preview.
+- **Check the cable's pinout with a meter before the first plug-in.** There is no reverse-polarity
+  protection: J1 is 1 VBUS, 2 D-, 3 D+, 4 CC, 5 GND.
 
 ## As built, against DESIGN.md
 
-- **21 × 40 mm**, not 20: the extra millimetre gives the 2.8 mm strips beside the module room for
-  the 3V3/EN parts and readable labels by the debug pads.
-- **Mounting holes are off the centre line.** The USB pins come out of the middle of the module's
-  bottom edge and J1 sits on the centre line, so the centre line is the USB path. H1 sits just past
-  the module, right of centre; H2 sits beside J1, on the left. The module end has no room for a
-  hole: the module and its antenna fill it.
+- **21 × 34.95 mm.** The board ends at the antenna boundary, so the antenna strip overhangs and
+  no keep-out rule area is needed: there's no board under or beside the antenna. The 21 mm width gives
+  the 2.8 mm strips beside the module room for the 3V3/EN parts and the debug pads.
+- **Mounting holes are off the centre line**, which is the USB path: H1 just past the module, right of
+  centre (under Mu's chest on the back, so its ring is masked there and her pixels over the drill are
+  dropped); H2 beside J1, on the left.
+- **Routing by hand** (`board/key_board.py`): the USB pair (0.2 mm, F.Cu, no stubs); the VBUS and 3V3
+  trunks (0.45 mm); EN, RX, TX, SDA, SCL and CC in lanes. The only B.Cu under the USB pair is a
+  1.75 mm VBUS hop: U3's VBUS pin sits between D- and D+, so reaching it means crossing one of them.
+  3V3 reaches the right half under J1's body, and R2 up the right edge on B.Cu. No B.Cu track crosses
+  Mu's face.
+- **GND** is left to the pours: the router doesn't route it. Stitching vias sit on a 1 mm grid wherever
+  they clear the copper, the silk text and Mu's white fur. A few hand-placed vias tie in pour pockets
+  that the tracks close off, and four sit near the antenna-end edge.
+- **U1** has a -0.18 mm paste margin on its nine centre pads (about 49 % coverage, against module
+  lift) and no thermal vias. Its corner GND pads and U2's GND pin connect to the pour solidly.
 - The **button** uses diagonal pads 2 and 3, which are on different contact bars whichever way the
   switch pairs its pins.
-- The **USB pair** is routed by hand (`usb_hand_route`): J1 → U3 → module pads 23/24, 0.2 mm, F.Cu,
-  no stubs. U3's VBUS and GND pins sit between the lines, so each drops straight to a via.
-  Freerouting routes everything else.
-- **Antenna keep-out**: a rule area (no tracks, vias, pads or pour on either layer) from the edge to
-  the end of the module's antenna strip, 5.05 mm, across the full width. The router's boundary
-  stops there too.
+- **Parts within 1 mm of a long edge** (exceptions to the rail rule): R2, C6, R4, R5 and the debug
+  pads in the right strip, and the mounting-hole rings.
+- **22 Ω USB series resistors: not fitted.** They would break the straight hand-routed pair, and Full
+  Speed USB doesn't need them.

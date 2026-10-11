@@ -68,11 +68,13 @@ def _pin_ids(pads):
 
 
 def write_dsn(circuit, placement, path, layers=4, route_area=None, fixed_vias=(), fixed_tracks=(),
-              via_keepouts=()):
+              via_keepouts=(), layer_keepouts=(), skip_nets=()):
     """route_area: polygon [(x, y), ...] the router may use (default: the board outline); the
     antenna keep-out is cut out of it. fixed_vias / fixed_tracks: Via and Track objects routed
     by hand (the USB pair), which the router keeps and routes around. via_keepouts: rectangles
-    (x0, y0, x1, y1) where the router may run tracks but place no via."""
+    (x0, y0, x1, y1) where the router may run tracks but place no via. layer_keepouts:
+    (layer, x0, y0, x1, y1) where the router may place nothing on that layer. skip_nets: nets left
+    out of the router's netlist (GND, carried by the pours); their pads stay as obstacles."""
     if layers not in (2, 4):
         raise ValueError("layers must be 2 or 4")
     copper = _layers(layers)
@@ -87,6 +89,8 @@ def write_dsn(circuit, placement, path, layers=4, route_area=None, fixed_vias=()
         out.append(f"    (layer {l} (type {'power' if l.startswith('In') else 'signal'}))")
     out.append(f"    (boundary (path pcb 0 {outline}))")
     out.append(f"    (via {_q(via)})")
+    for l, x0_, y0_, x1_, y1_ in layer_keepouts:
+        out.append(f"    (keepout (rect {l} {_u(x0_)} {_u(-y1_)} {_u(x1_)} {_u(-y0_)}))")
     for x0_, y0_, x1_, y1_ in via_keepouts:
         for l in copper:
             out.append(f"    (via_keepout (rect {l} {_u(x0_)} {_u(-y1_)} {_u(x1_)} {_u(-y0_)}))")
@@ -125,15 +129,17 @@ def write_dsn(circuit, placement, path, layers=4, route_area=None, fixed_vias=()
     for name in sorted(circuit.nets):
         pins = " ".join(f"{r}-{pid}" for r, p in sorted(circuit.nets[name])
                         for pad, pid in ids[r] if pad.number == p)
+        if name in skip_nets:          # declared (its fixed vias need it) but with one pin only
+            pins = pins.split()[0]
         out.append(f"    (net {_q(name)} (pins {pins}))")
     # On a 2-layer board GND is carried by the B.Cu pour; the tracks are only connections to it,
     # and 0.5 mm tracks cannot be routed between 0.5 mm-pitch pads (Freerouting left 20 GND
     # connections open), so GND gets its own class there: default width, power clearance.
     # It must keep the Power class clearance (0.2 mm) from .kicad_pro; like every class the
     # router is given ROUTER_MARGIN extra, so runs that read_ses() widens back to 0.15 mm still clear.
-    thin_gnd = layers == 2 and "GND" in circuit.nets
-    power = [n for n in sorted(circuit.nets) if n in POWER and not (thin_gnd and n == "GND")]
-    other = [n for n in sorted(circuit.nets) if n not in POWER]
+    thin_gnd = layers == 2 and "GND" in circuit.nets and "GND" not in skip_nets
+    power = [n for n in sorted(circuit.nets) if n in POWER and not (n == "GND" and (thin_gnd or n in skip_nets))]
+    other = [n for n in sorted(circuit.nets) if n not in POWER and n not in skip_nets]
     out.append(f"    (class default {' '.join(_q(n) for n in other)} "
                f"(circuit (use_via {_q(via)})) (rule (width {_u(0.15)}) (clearance {_u(ROUTER_MARGIN + 0.15)})))")
     if power:

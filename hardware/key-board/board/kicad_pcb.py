@@ -144,12 +144,22 @@ SILK_EDGE = 0.2      # footprint silk lines are pulled this far inside the board
 
 
 def _clip_silk(fp, x, y, rot, outline):
-    """Pull footprint silk line ends that reach the board edge (the module's outline lies on
-    it) back inside, so that nothing is printed over the edge."""
+    """Footprint silk lines that lie wholly on or beyond the board edge (the module's antenna
+    overhangs it) are dropped; line ends that cross the edge are pulled back inside, so that
+    nothing is printed over the edge."""
     x0, y0, x1, y1 = (outline[0] + SILK_EDGE, outline[1] + SILK_EDGE,
                       outline[2] - SILK_EDGE, outline[3] - SILK_EDGE)
+
+    def outside(pt):
+        bx, by = rotate(pt[1], pt[2], rot)
+        bx, by = x + bx, y + by
+        return not (outline[0] + 0.05 < bx < outline[2] - 0.05 and outline[1] + 0.05 < by < outline[3] - 0.05)
+
     for g in find_all(fp, "fp_line"):
         if "SilkS" not in str(find(g, "layer")[1]):
+            continue
+        if outside(find(g, "start")) and outside(find(g, "end")):
+            fp.remove(g)
             continue
         for key in ("start", "end"):
             pt = find(g, key)
@@ -157,6 +167,17 @@ def _clip_silk(fp, x, y, rot, outline):
             cx, cy = min(max(x + bx, x0), x1), min(max(y + by, y0), y1)
             lx, ly = rotate(cx - x, cy - y, -rot)
             pt[1:3] = [round(lx, 4), round(ly, 4)]
+
+
+def _drop_silk(fp, x, y, rot, boxes):
+    """Remove footprint silk lines that pass through any of 'boxes' (board coordinates)."""
+    for g in find_all(fp, "fp_line"):
+        if "SilkS" not in str(find(g, "layer")[1]):
+            continue
+        a, b = (rotate(find(g, k)[1], find(g, k)[2], rot) for k in ("start", "end"))
+        pts = [(x + a[0] + (b[0] - a[0]) * i / 20, y + a[1] + (b[1] - a[1]) * i / 20) for i in range(21)]
+        if any(x0 <= px <= x1 and y0 <= py <= y1 for px, py in pts for x0, y0, x1, y1 in boxes):
+            fp.remove(g)
 
 
 def _zone(net_id, name, layer, outline, uid):
@@ -207,16 +228,20 @@ PRO = {
 
 
 def write_board(circuit, placement, path, tracks=(), vias=(), layers=4, silk=(), hide_refs=(), art=(),
-                mask=None, silkscreen=None, keepouts=()):
+                mask=None, silkscreen=None, keepouts=(), pad_extra=None, user_rects=(), silk_avoid=()):
     """Write 'path' (.kicad_pcb) and a .kicad_pro beside it.
 
     layers=4: F.Cu, In1.Cu (GND zone), In2.Cu (+1V5 zone, only if that net exists), B.Cu.
     layers=2: F.Cu and B.Cu, each with a GND zone.
     silk: (text, x, y, size_mm[, layer[, rotation]]) entries; layer defaults to F.SilkS.
     hide_refs: refs whose reference text is not drawn.
-    art: (png_path, x, y, height_mm[, side]) portraits, top-left at (x, y) in board (top-view)
+    art: (png_path, x, y, height_mm[, side[, holes]]) portraits, top-left at (x, y) in board (top-view)
     coordinates; side "back" puts it on B.SilkS, mirrored to read correctly from the back.
     keepouts: (name, [(x, y), ...], layers) rule areas with no copper at all.
+    pad_extra: {ref: f(pad) -> [nodes]}, extra s-expressions appended to that part's pads (a paste
+    margin, a solid zone connection); f gets the kicadlib Pad.
+    user_rects: (x0, y0, x1, y1, layer) outlines on user layers (fab notes).
+    silk_avoid: boxes (x0, y0, x1, y1); footprint silk lines that cross one are dropped.
     mask, silkscreen: colour names for the stackup, which only affects renders (gerbers carry
     no colour). None for both keeps KiCad's defaults (green mask, white silk)."""
     if layers not in (2, 4):
@@ -244,7 +269,11 @@ def write_board(circuit, placement, path, tracks=(), vias=(), layers=4, silk=(),
         x, y, rot = placement.at[ref]
         nets = {pad: (ids[n], n) for n in names for (r, pad) in circuit.nets[n] if r == ref}
         fp = _footprint(inst, x, y, rot, nets, uid, ref in hide_refs)
+        if pad_extra and ref in pad_extra:
+            for node, pad in zip(find_all(fp, "pad"), inst.part.footprint.pads):
+                node[-1:-1] = pad_extra[ref](pad)       # before the pad's uuid
         _clip_silk(fp, x, y, rot, placement.outline)
+        _drop_silk(fp, x, y, rot, silk_avoid)
         tree.append(fp)
     plane = [("GND", "In1.Cu")] if layers == 4 else [("GND", "F.Cu"), ("GND", "B.Cu")]
     if layers == 4:
@@ -263,7 +292,12 @@ def write_board(circuit, placement, path, tracks=(), vias=(), layers=4, silk=(),
     if art:
         from board.art import art_footprint
         for k, a in enumerate(art):
-            tree.append(art_footprint(*a[:4], name=f"ART{k + 1}", side=a[4] if len(a) > 4 else "front"))
+            tree.append(art_footprint(*a[:4], name=f"ART{k + 1}", side=a[4] if len(a) > 4 else "front",
+                                      holes=a[5] if len(a) > 5 else ()))
+    for rx0, ry0, rx1, ry1, layer in user_rects:
+        tree.append([S("gr_rect"), [S("start"), rx0, ry0], [S("end"), rx1, ry1],
+                     [S("stroke"), [S("width"), 0.1], [S("type"), S("dash")]], [S("fill"), S("none")],
+                     [S("layer"), layer], uid()])
     for entry in silk:
         tree.append(_text(*entry[:4], uid, *entry[4:]))
     path.write_text(dumps(tree).replace(") (", ")\n (") + "\n")

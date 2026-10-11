@@ -53,18 +53,35 @@ def art_size(png, height_mm):
     return img.width * px, img.height * px
 
 
-def art_footprint(png, x, y, height_mm, name="ART", side="front"):
+def drop_holes(img, px, x, y, back, holes):
+    """Clear the pixels whose centre lies within any (cx, cy, r) circle (board coordinates):
+    silk over a drilled hole only gets torn off, and DRC flags it."""
+    if not holes:
+        return img
+    img = img.copy()
+    p = img.load()
+    for row in range(img.height):
+        for col in range(img.width):
+            lx = (img.width - col - 0.5) * px if back else (col + 0.5) * px
+            bx, by = x + lx, y + (row + 0.5) * px
+            if any((bx - cx) ** 2 + (by - cy) ** 2 <= r * r for cx, cy, r in holes):
+                p[col, row] = 0
+    return img
+
+
+def art_footprint(png, x, y, height_mm, name="ART", side="front", holes=()):
     """Footprint node whose image occupies the box with top-left corner at board (x, y) in
     top-view coordinates, 'height_mm' tall.
 
     side="back" puts the pixels on B.SilkS and mirrors them left-right, so that the picture reads
     correctly when the board is turned over (the viewer's left is then the board's +x). KiCad
     stores a back footprint's graphics already flipped, so the mirrored local coordinates are
-    written as they are."""
+    written as they are. holes: (cx, cy, r) circles in board coordinates left free of silk."""
     if side not in ("front", "back"):
         raise ValueError("side must be front or back")
     back = side == "back"
     img, px = load_art(Path(png), height_mm)
+    img = drop_holes(img, px, x, y, back, holes)
     width = img.width * px
     n = [0]
 

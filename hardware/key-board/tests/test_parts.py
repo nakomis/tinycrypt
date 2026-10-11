@@ -55,5 +55,10 @@ def test_ldo_and_esd_pins():
     assert sorted(part("ESD").pins) == ["1", "2", "3", "4", "5", "6"]
 
 
+def test_local_footprints():
+    assert sorted(p.number for p in part("DEBUG").footprint.pads) == ["1", "2", "3", "4", "5"]
+    assert part("R330").lcsc == "C25104" and part("R330").value == "330R"
+
+
 def test_tht_flags():
     assert part("MH").tht and not part("ESP32").tht and not part("JST5").tht

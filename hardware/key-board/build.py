@@ -56,24 +56,30 @@ def main():
     if problems:
         raise SystemExit("\n".join(problems))
     p = kb.place_key(c)
-    hand_tracks, hand_vias = kb.usb_hand_route()
-    fixed = kb.thermal_vias() + hand_vias
+    usb_t, usb_v = kb.usb_hand_route()
+    pwr_t, pwr_v = kb.power_hand_route()
+    sig_t, sig_v = kb.signal_hand_route()
+    hand_tracks = usb_t + pwr_t + sig_t
+    fixed = usb_v + pwr_v + sig_v + kb.edge_vias()
+    text_boxes = kb.back_text_boxes() + kb.front_text_boxes(c, p)
     tracks, vias = list(hand_tracks), list(fixed)
     if a.route:
         routed_tracks, routed = route(c, p, tmp, passes=a.passes, layers=LAYERS, route_area=kb.route_area(),
-                                      fixed_vias=fixed, fixed_tracks=hand_tracks,
-                                      via_keepouts=kb.back_text_boxes(),
+                                      fixed_vias=fixed, fixed_tracks=hand_tracks, via_keepouts=text_boxes,
+                                      layer_keepouts=kb.layer_keepouts(), skip_nets=("GND",),
                                       log="/tmp/claude-501/key-board-route.log")
         tracks, vias = prune(c, p, tracks + routed_tracks, fixed + routed, keep=fixed)
-        stitch = kb.stitch_vias(c, p, tracks, vias, avoid=kb.back_text_boxes(), avoid_at=kb.on_art)
+        stitch = kb.stitch_vias(c, p, tracks, vias, avoid=text_boxes, avoid_at=kb.on_art)
         print(f"stitching: {len(stitch)} GND vias")
         vias += stitch
-    if kb.vias_under_text(vias):
-        raise SystemExit(f"vias under the back text: {kb.vias_under_text(vias)}")
+    if kb.vias_under_text(vias, text_boxes):
+        raise SystemExit(f"vias under silk text: {kb.vias_under_text(vias, text_boxes)}")
     board = out / f"{stem}.kicad_pcb"
-    write_board(c, p, board, tracks, vias, layers=LAYERS, silk=kb.silk_key(c, p), art=kb.art_key(p),
+    notes, rects = kb.fab_notes()
+    write_board(c, p, board, tracks, vias, layers=LAYERS, silk=kb.silk_key(c, p) + notes, art=kb.art_key(p),
                 hide_refs=set(c.instances), mask=MASK, silkscreen=SILK,     # silk labels replace ref texts
-                keepouts=kb.keepouts())
+                keepouts=kb.keepouts(), pad_extra=kb.pad_extra(), user_rects=rects,
+                silk_avoid=kb.silk_avoid(c, p))
     bad, warn = drc(board, out)
     kinds = {}
     for v in warn:

@@ -20,11 +20,21 @@ def test_read_ses_converts_units_and_flips_y():
     assert (vias[0].x, vias[0].y) == (110.0, 105.0)
 
 
+def _hand():
+    t, v = [], []
+    for f in (kb.usb_hand_route, kb.power_hand_route, kb.signal_hand_route):
+        a, b = f()
+        t += a
+        v += b
+    return t, v + kb.edge_vias()
+
+
 def _dsn(tmp_path):
     c = kb.build_key()
-    hand_t, hand_v = kb.usb_hand_route()
+    hand_t, hand_v = _hand()
     write_dsn(c, kb.place_key(c), tmp_path / "a.dsn", layers=2, route_area=kb.route_area(),
-              fixed_vias=kb.thermal_vias() + hand_v, fixed_tracks=hand_t, via_keepouts=kb.back_text_boxes())
+              fixed_vias=hand_v, fixed_tracks=hand_t, via_keepouts=kb.back_text_boxes(),
+              layer_keepouts=kb.layer_keepouts(), skip_nets=("GND",))
     return c, (tmp_path / "a.dsn").read_text()
 
 
@@ -33,19 +43,23 @@ def test_dsn_two_layer(tmp_path):
     assert "(plane" not in text and "In1.Cu" not in text
     assert "(layer F.Cu (type signal))" in text and "(layer B.Cu (type signal))" in text
     assert text.count("(net ") >= len(c.nets)
-    assert "(class gnd GND" in text and '(class power "+3V3" VBUS' in text
+    assert "(class gnd GND" not in text and '(class power "+3V3" VBUS' in text
+    gnd = next(l for l in text.splitlines() if l.strip().startswith("(net GND"))
+    assert gnd.count("-") == 1                    # GND is left to the pours: one pin, nothing to route
 
 
-def test_dsn_boundary_excludes_the_antenna(tmp_path):
+def test_dsn_boundary_is_the_board(tmp_path):
     _, text = _dsn(tmp_path)
     line = next(l for l in text.splitlines() if "(boundary" in l)
     nums = [int(v) for v in line.replace(")", " ").split()[4:]]
     ys = [-y / 1000 for y in nums[1::2]]
-    assert abs(min(ys) - kb.ANT_Y) < 1e-6 and abs(max(ys) - kb.L) < 1e-6
+    assert abs(min(ys)) < 1e-6 and abs(max(ys) - kb.L) < 1e-6
 
 
 def test_dsn_repeated_pad_numbers_get_unique_pin_ids(tmp_path):
-    _, text = _dsn(tmp_path)
+    c = kb.build_key()
+    write_dsn(c, kb.place_key(c), tmp_path / "b.dsn", layers=2)
+    text = (tmp_path / "b.dsn").read_text()
     img = next(l for l in text.splitlines() if "(image U1_img" in l)
     assert img.count(' GND ') == 1 and ' GND_13 ' in img and ' GND_14 ' not in img
     gnd = next(l for l in text.splitlines() if l.strip().startswith("(net GND"))
@@ -54,9 +68,11 @@ def test_dsn_repeated_pad_numbers_get_unique_pin_ids(tmp_path):
 
 def test_dsn_carries_hand_route_and_keepouts(tmp_path):
     _, text = _dsn(tmp_path)
-    assert text.count("(type protect)") == len(kb.usb_hand_route()[0])
-    assert text.count("(type fix)") == 6                   # 4 thermal + VBUS + GND
+    t, v = _hand()
+    assert text.count("(type protect)") == len(t)
+    assert text.count("(type fix)") == len(v)
     assert text.count("(via_keepout") == 2 * len(kb.back_text_boxes())
+    assert text.count("(keepout (rect B.Cu") == 2              # under the USB pair and Mu's face
 
 
 def test_full_route_is_drc_clean():
@@ -68,19 +84,18 @@ def test_full_route_is_drc_clean():
     assert drc["unconnected_items"] == []
     assert [v for v in drc["violations"] if v["severity"] == "error"] == []
     tree = parse((out / "tinycrypt-key.kicad_pcb").read_text())
-    # no track or via in the antenna keep-out, and no filled copper there either
-    for s in find_all(tree, "segment"):
-        assert find(s, "start")[2] >= kb.ANT_Y and find(s, "end")[2] >= kb.ANT_Y
-    for v in find_all(tree, "via"):
-        assert find(v, "at")[2] - 0.3 >= kb.ANT_Y
-    for z in find_all(tree, "zone"):
-        for fp in find_all(z, "filled_polygon"):
-            assert min(xy[2] for xy in find_all(find(fp, "pts"), "xy")) >= kb.ANT_Y - 1e-6
+    # every via clear of Mu's white fur and of all silk text; B.Cu under the USB pair holds only
+    # the one VBUS hop
+    vias = [find(v, "at")[1:3] for v in find_all(tree, "via")]
+    assert not [v for v in vias if kb.on_art(*v, margin=0.3)]
+    x0, y0, x1, y1 = kb.USB_ZONE
+    under = [s for s in find_all(tree, "segment") if find(s, "layer")[1] == "B.Cu"
+             and any(x0 < find(s, k)[1] < x1 and y0 < find(s, k)[2] < y1 for k in ("start", "end"))]
+    assert len(under) <= 1
     for name in ("bom.csv", "cpl.csv", "pins.h", "tinycrypt-key-gerbers.zip",
                  "tinycrypt-key-top.png", "tinycrypt-key-bottom.png"):
         assert (out / name).exists(), name
-    assert not kb.vias_under_text([type("V", (), {"x": find(v, "at")[1], "y": find(v, "at")[2], "size": 0.6})
-                                   for v in find_all(tree, "via")])
+    assert not kb.vias_under_text([type("V", (), {"x": x, "y": y, "size": 0.6}) for x, y in vias])
 
 
 def test_read_ses_reports_widened_segments(tmp_path):

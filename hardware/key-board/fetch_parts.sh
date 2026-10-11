@@ -12,6 +12,7 @@ PARTS=(
   C52917434 # LED (WS2812B-2020-V6)
   C25905    # R5K1
   C25744    # R10K
+  C25104    # R330 (LED data series resistor)
   C25900    # R4K7
   C1525     # C100N
   C52923    # C1U

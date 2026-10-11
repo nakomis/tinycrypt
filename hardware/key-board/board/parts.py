@@ -39,10 +39,11 @@ _TABLE = {
     "R5K1": ("5k1", "C25905", "R0402", "0402WGF5101TCE", False, 0),
     "R10K": ("10k", "C25744", "R0402", "0402WGF1002TCE", False, 0),
     "R4K7": ("4k7", "C25900", "R0402", "0402WGF4701TCE", False, 0),
+    "R330": ("330R", "C25104", "R0402", "0402WGF3300TCE", False, 0),
     "C100N": ("100nF", "C1525", "C0402", "CL05B104KO5NNNC", False, 0),
     "C1U": ("1uF", "C52923", "C0402", "CL05A105KA5NQNC", False, 0),
     "C10U": ("10uF", "C19702", "C0603", "CL10A106KP8NNNC", False, 0),
-    "DEBUG": ("Debug pads", None, "DebugPads_1x4_P2.54", None, False, 0),
+    "DEBUG": ("Debug pads", None, "DebugPads_1x5_P2.54", None, False, 0),
     "MH": ("M2 hole", None, "MountingHole_M2_2.2mm_Pad4.4", None, False, 0),
 }
 
@@ -53,7 +54,11 @@ ALIASES = {}
 # Real extents where the footprint's courtyard is smaller than the part. The EasyEDA module
 # footprint's courtyard covers only the pad field (15.4 x 15.4); the module is 15.4 x 20.5 with
 # the PCB antenna in the 5.05 mm beyond pads 46-60 (its silkscreen outline: y -12.8 .. 7.7).
-BODY = {"ESP32": (-7.7, -12.8, 7.7, 7.7)}
+# The JST socket's and the SOIC's computed courtyards are padded rectangles; their real extents
+# (pads and body) leave room for U4 just above J1's signal pads.
+BODY = {"ESP32": (-7.7, -12.8, 7.7, 7.7),
+        "JST5": (-3.9, -2.79, 3.9, 3.16),      # tabs x +-3.9, signal pads to y -2.79, housing front 2.83
+        "ATECC": (-2.46, -3.5, 2.44, 3.5)}     # body width, pad tips at y +-3.5
 # The antenna strip of the module, in footprint coordinates (above the top pad row).
 ESP32_ANTENNA = (-7.7, -12.8, 7.7, -7.75)
 
