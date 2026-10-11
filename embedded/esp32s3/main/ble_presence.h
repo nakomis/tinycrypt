@@ -7,8 +7,12 @@
 //   enrol      write  X||Y (64): the watch's public key; only while the enrol window is open
 //   telemetry  write  timing JSON from the watch, logged
 //
-// A challenge lives for one user action (solo1's U2F path re-asks every 750 ms; the challenge
-// survives that) and is single-use: one valid signature approves once, then the challenge is gone.
+// A challenge lives for one user action (presence_is_new_action(): solo1's U2F path re-asks every
+// 750 ms, and the challenge survives that, readable for up to PRESENCE_SAME_ACTION_GAP_MS after a
+// wait ends). It is single-use: one valid signature approves once. A cancel retires it.
+//
+// Any central may connect (no pairing yet), so a connection is dropped after 10 s whatever it's
+// doing, and two are allowed, so a squatter can't lock the watch out.
 #pragma once
 
 #include <stdbool.h>
@@ -16,9 +20,9 @@
 
 #include "presence.h"
 
-// Starts NimBLE and advertises. Call after notifier_start() (or bootloader_random_disable()):
-// the radio replaces the ADC as the RNG's entropy source.
-void ble_presence_start(void);
+// Starts NimBLE and advertises. Call after bootloader_random_disable(): the radio replaces the ADC
+// as the RNG's entropy source. Returns false if BLE failed to start (then nothing feeds the RNG).
+bool ble_presence_start(void);
 
 // The watch as a presence source for presence_wait().
 extern const presence_source ble_presence_source;

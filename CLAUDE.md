@@ -36,15 +36,22 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
 - **Presence wait** (CRYPT-13, `port/presence.c`, shared by the sim and the ESP32): every source (button,
   watch over BLE, push notifier) is armed; the first to approve wins. During the wait CTAPHID is handled
   there, never by re-entering solo1 (whose static buffer holds the request's channel): KEEPALIVE to the
-  requesting CID, CANCEL/INIT only from that CID end it, other channels get CHANNEL_BUSY.
-  `presence_is_new_action()` groups U2F's 750 ms re-asks into one action (one push, one challenge); a
-  retry after a full timeout is a new one. Sim: `--presence button+watch --watch-after MS --up-timeout MS`.
+  requesting CID (the last report noted before the wait began), CANCEL from that CID ends it, an INIT
+  from it aborts the transaction (the core's answer is dropped and the INIT replayed afterwards, so it
+  gets its reply), other channels get CHANNEL_BUSY. Ports wire in `presence_note_report`,
+  `presence_filter_send` and `presence_take_deferred` (see `presence.h`).
+  `presence_is_new_action()` groups U2F's 750 ms re-asks on one channel into one action (one push, one
+  challenge); a new channel, a cancel, an approval, a 3 s gap or a retry after a full timeout starts a
+  new one, and a cancel also discards the challenge and any unused approval. Sim: `--presence button+watch --watch-after MS --up-timeout MS`.
 - **Watch over BLE on the key** (`esp32s3/main/ble_presence.c`, NimBLE, `CONFIG_TINYCRYPT_WATCH_BLE`): the
   key advertises the protocol-v0 GATT service; a challenge (`"tinycrypt-presence-v0" ‖ nonce32`) is
-  readable only during a wait and approves once. **Enrol:** hold BOOT 5 s while idle (not at power-up:
+  readable during a wait (and up to 3 s after, for U2F re-asks) and approves once. No pairing yet, so
+  every connection is dropped after 10 s and two are allowed (a squatter can't lock the watch out). **Enrol:** hold BOOT 5 s while idle (not at power-up:
   that's download mode) for a 60 s window; the watch taps "Enrol with key". Its public key is in NVS
   (`watch_pub`), so reflashing keeps it. Wi-Fi runs modem sleep alongside BLE (ESP-IDF requires it).
-  Measured: tap on Approve → key verified 1.5–1.9 s, app in the background.
+  Measured: tap on Approve → key verified 1.5–1.9 s, app in the background. If no radio starts, the
+  ADC entropy source is switched back on. `sdkconfig.defaults` only applies to a fresh `sdkconfig`:
+  after changing it, `rm embedded/esp32s3/sdkconfig` and rebuild.
 - **Presence contract** (`ctap_user_presence_test`): return only 1 (present), 0 (absent, cancelled
   or timed out) or 2 (check disabled by the request). solo1's U2F code tests `== 0` / `!ret`, so
   any other value (e.g. -1 for cancel) counts as present and signs without a press. (solo1's

@@ -109,12 +109,13 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         if (err_ != ESP_OK)                                                            \
         {                                                                              \
             ESP_LOGE(TAG, "%s failed: %s; notifier off", #x, esp_err_to_name(err_)); \
-            return;                                                                    \
+            return radio_on;                                                           \
         }                                                                              \
     } while (0)
 
-void notifier_start(void)
+bool notifier_start(void)
 {
+    bool radio_on = false;
     // The radio becomes the RNG's entropy source; the ADC one must be off before Wi-Fi starts.
     bootloader_random_disable();
 
@@ -123,7 +124,7 @@ void notifier_start(void)
     if (esp_netif_create_default_wifi_sta() == NULL)
     {
         ESP_LOGE(TAG, "no Wi-Fi station interface; notifier off");
-        return;
+        return false;
     }
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     TRY(esp_wifi_init(&init));
@@ -139,6 +140,7 @@ void notifier_start(void)
     TRY(esp_wifi_set_mode(WIFI_MODE_STA));
     TRY(esp_wifi_set_config(WIFI_IF_STA, &sta));
     TRY(esp_wifi_start());
+    radio_on = true;  // from here on the radio is the entropy source
 #ifdef CONFIG_BT_ENABLED
     // Wi-Fi and BLE share the radio, and ESP-IDF requires modem sleep for that. A push then waits
     // for the next beacon at most (~100 ms with DTIM 1).
@@ -167,13 +169,14 @@ void notifier_start(void)
     if (mqtt == NULL)
     {
         ESP_LOGE(TAG, "esp_mqtt_client_init failed; notifier off");
-        return;
+        return radio_on;
     }
     TRY(esp_mqtt_client_register_event(mqtt, ESP_EVENT_ANY_ID, mqtt_event, NULL));
     TRY(esp_mqtt_client_start(mqtt));
     started = true;
     ESP_LOGI(TAG, "notifier starting: Wi-Fi \"%s\", IoT Core %s, topic %s", CONFIG_TINYCRYPT_WIFI_SSID,
              CONFIG_TINYCRYPT_IOT_ENDPOINT, CONFIG_TINYCRYPT_PRESENCE_TOPIC);
+    return radio_on;
 }
 
 static int64_t epoch_ms(void)

@@ -24,6 +24,7 @@ class Sim:
         self.state_dir = state_dir
         self.presence = presence
         self.extra_args = list(extra_args)
+        self.log = []
         self.port = _free_udp_port()
         self.proc = None
 
@@ -40,13 +41,18 @@ class Sim:
         seen = []
         for line in self.proc.stdout:
             if line.startswith("READY"):
-                # Keep draining both pipes so a chatty sim never blocks on a full pipe.
-                for stream in (self.proc.stdout, self.proc.stderr):
-                    threading.Thread(target=stream.read, daemon=True).start()
+                # Keep draining both pipes so a chatty sim never blocks on a full pipe; keep
+                # stderr's lines, which tests can inspect.
+                threading.Thread(target=self.proc.stdout.read, daemon=True).start()
+                threading.Thread(target=self._collect_stderr, daemon=True).start()
                 return self
             seen.append(line)
         self.stop()
         raise RuntimeError(f"sim failed to start: {''.join(seen)} {self.proc.stderr.read()}")
+
+    def _collect_stderr(self):
+        for line in self.proc.stderr:
+            self.log.append(line.rstrip("\n"))
 
     def press_button(self):
         self.proc.stdin.write("\n")

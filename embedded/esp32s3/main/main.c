@@ -144,6 +144,8 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
 // endpoint to drain the previous one (time-based: a tick may be longer than 1 ms).
 void usbhid_send(uint8_t *msg)
 {
+    if (!presence_filter_send(msg))
+        return;  // answers a transaction the client aborted with INIT (presence.h)
     int64_t until = esp_timer_get_time() + 100 * 1000;
     while (!tud_hid_ready() && esp_timer_get_time() < until)
         vTaskDelay(1);
@@ -422,8 +424,13 @@ static void ctap_task(void *arg)
         {
             presence_note_report(msg);
             ctaphid_handle_packet(msg);
-            // The core nests a second CTAP_RESPONSE when packets arrive during a
-            // presence wait; watch how close that gets to the stack limit.
+            while (presence_take_deferred(msg))
+            {
+                presence_note_report(msg);
+                ctaphid_handle_packet(msg);
+            }
+            // The presence wait runs inside ctaphid_handle_packet(); watch how close it gets
+            // to the stack limit.
             UBaseType_t free_now = uxTaskGetStackHighWaterMark(NULL);
             if (free_now < low_water)
             {
@@ -458,13 +465,22 @@ void app_main(void)
     // No radio is on, so use the ADC noise source for esp_fill_random().
     // Must be disabled again before Wi-Fi/BLE or the ADC are used.
     bootloader_random_enable();
+    // The radio replaces the ADC as the RNG's entropy source. If no radio comes up, put the ADC
+    // source back: credential keys and ECDSA nonces must never come from a bare PRNG.
+    bool radio = false;
 #ifdef CONFIG_TINYCRYPT_NOTIFIER
-    // Disables the ADC source again and brings up the radio, which replaces it.
-    notifier_start();
+    radio |= notifier_start();
 #endif
 #ifdef CONFIG_TINYCRYPT_WATCH_BLE
     bootloader_random_disable();  // (again, if the notifier is off) before the radio starts
-    ble_presence_start();
+    radio |= ble_presence_start();
+#endif
+#if defined(CONFIG_TINYCRYPT_NOTIFIER) || defined(CONFIG_TINYCRYPT_WATCH_BLE)
+    if (!radio)
+    {
+        ESP_LOGW(TAG, "no radio started: ADC entropy back on");
+        bootloader_random_enable();
+    }
 #endif
 
     gpio_config_t button = {

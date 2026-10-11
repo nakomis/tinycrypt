@@ -14,6 +14,7 @@
 #include "nimble/nimble_port_freertos.h"
 #include "nvs.h"
 #include "presence_sig.h"
+#include "uECC.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
@@ -24,7 +25,10 @@ static const char *TAG = "ble-presence";
 #define NONCE_LEN 32
 #define CHALLENGE_LEN (DOMAIN_LEN + NONCE_LEN)
 // An unapproved challenge outlives its wait by this long, so a U2F re-ask can still use it.
-#define SAME_ACTION_GAP_US (3 * 1000 * 1000)
+#define SAME_ACTION_GAP_US ((int64_t)PRESENCE_SAME_ACTION_GAP_MS * 1000)
+// Any connection is dropped after this long: an approval takes under 2 s.
+#define CONNECTION_LIMIT_US (10 * 1000 * 1000)
+#define TELEMETRY_LOG_MAX 160
 #define NVS_NAMESPACE "tinycrypt"
 #define NVS_WATCH_KEY "watch_pub"
 
@@ -51,12 +55,14 @@ static void advertise(void);
 static void arm(void *ctx)
 {
     (void)ctx;
+    uint8_t nonce[NONCE_LEN];
+    esp_fill_random(nonce, sizeof(nonce));  // outside the critical section
     taskENTER_CRITICAL(&lock);
     bool new_action = presence_is_new_action() || !challenge_live;
     if (new_action)
     {
         memcpy(challenge, DOMAIN_TAG, DOMAIN_LEN);
-        esp_fill_random(challenge + DOMAIN_LEN, NONCE_LEN);
+        memcpy(challenge + DOMAIN_LEN, nonce, NONCE_LEN);
         challenge_live = true;
         approved = false;
     }
@@ -86,8 +92,13 @@ static void disarm(void *ctx, int result)
     taskENTER_CRITICAL(&lock);
     waiting = false;
     last_wait_end_us = esp_timer_get_time();
-    if (result == 1)
-        challenge_live = false;  // approved by the button or the watch: nothing left to sign
+    // Approved (by either source) or cancelled: this challenge, and any approval not yet used, are
+    // finished, so nothing can carry over to another request.
+    if (result == 1 || presence_was_cancelled())
+    {
+        challenge_live = false;
+        approved = false;
+    }
     taskEXIT_CRITICAL(&lock);
 }
 
@@ -107,7 +118,10 @@ static void expire_challenge(void)
 
 void ble_presence_open_enrol(uint32_t seconds)
 {
-    enrol_until_us = esp_timer_get_time() + (int64_t)seconds * 1000000;
+    int64_t until = esp_timer_get_time() + (int64_t)seconds * 1000000;
+    taskENTER_CRITICAL(&lock);
+    enrol_until_us = until;
+    taskEXIT_CRITICAL(&lock);
     ESP_LOGW(TAG, "ENROL window open for %" PRIu32 " s: tap Enrol with key on the watch", seconds);
 }
 
@@ -118,13 +132,21 @@ bool ble_presence_enrolled(void)
 
 static int enrol(const uint8_t *pub, size_t len)
 {
-    if (esp_timer_get_time() > enrol_until_us)
+    taskENTER_CRITICAL(&lock);
+    bool open = esp_timer_get_time() <= enrol_until_us;
+    taskEXIT_CRITICAL(&lock);
+    if (!open)
     {
         ESP_LOGW(TAG, "enrol refused: hold the button 5 s to open the enrol window");
         return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
     }
     if (len != TINYCRYPT_P256_PUB_LEN)
         return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    if (!uECC_valid_public_key(pub, uECC_secp256r1()))
+    {
+        ESP_LOGW(TAG, "enrol refused: not a point on P-256");
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    }
     nvs_handle_t nvs;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK)
         return BLE_ATT_ERR_UNLIKELY;
@@ -136,7 +158,9 @@ static int enrol(const uint8_t *pub, size_t len)
         return BLE_ATT_ERR_UNLIKELY;
     memcpy(watch_pub, pub, len);
     have_watch = true;
+    taskENTER_CRITICAL(&lock);
     enrol_until_us = 0;  // one watch per window
+    taskEXIT_CRITICAL(&lock);
     ESP_LOGW(TAG, "ENROLLED watch key %02x%02x%02x%02x...", pub[0], pub[1], pub[2], pub[3]);
     return 0;
 }
@@ -217,7 +241,13 @@ static int gatt_access(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt
         return enrol(buf, len);
     if (ble_uuid_cmp(uuid, &telemetry_uuid.u) == 0)
     {
-        ESP_LOGI(TAG, "watch telemetry: %.*s", (int)len, (const char *)buf);
+        // Unauthenticated: log it truncated and printable only, clearly marked as the peer's words.
+        char text[TELEMETRY_LOG_MAX + 1];
+        size_t n = len < TELEMETRY_LOG_MAX ? len : TELEMETRY_LOG_MAX;
+        for (size_t i = 0; i < n; i++)
+            text[i] = buf[i] >= 0x20 && buf[i] < 0x7f ? (char)buf[i] : '?';
+        text[n] = 0;
+        ESP_LOGI(TAG, "peer telemetry (unverified): %s", text);
         return 0;
     }
     return BLE_ATT_ERR_UNLIKELY;
@@ -238,18 +268,63 @@ static const struct ble_gatt_svc_def services[] = {
 
 // ---- GAP ---------------------------------------------------------------------
 
+// One slot per allowed connection; each has a one-shot timer that drops it after the limit.
+#define SLOTS CONFIG_BT_NIMBLE_MAX_CONNECTIONS
+#define NO_CONN 0xffff
+static esp_timer_handle_t slot_timer[SLOTS];
+static uint16_t slot_conn[SLOTS] = {[0 ... SLOTS - 1] = NO_CONN};
+
+static void drop_connection(void *arg)
+{
+    uint16_t handle = slot_conn[(uintptr_t)arg];
+    if (handle != NO_CONN && ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM) == 0)
+        ESP_LOGI(TAG, "connection %u dropped after %d s", handle, (int)(CONNECTION_LIMIT_US / 1000000));
+}
+
+static void connection_opened(uint16_t handle)
+{
+    for (uintptr_t i = 0; i < SLOTS; i++)
+    {
+        if (slot_conn[i] != NO_CONN)
+            continue;
+        if (slot_timer[i] == NULL)
+        {
+            const esp_timer_create_args_t args = {.callback = drop_connection, .arg = (void *)i, .name = "ble_limit"};
+            if (esp_timer_create(&args, &slot_timer[i]) != ESP_OK)
+                return;
+        }
+        slot_conn[i] = handle;
+        esp_timer_start_once(slot_timer[i], CONNECTION_LIMIT_US);
+        return;
+    }
+}
+
+static void connection_closed(uint16_t handle)
+{
+    for (int i = 0; i < SLOTS; i++)
+        if (slot_conn[i] == handle)
+        {
+            esp_timer_stop(slot_timer[i]);
+            slot_conn[i] = NO_CONN;
+        }
+}
+
 static int gap_event(struct ble_gap_event *event, void *arg)
 {
     (void)arg;
     switch (event->type)
     {
     case BLE_GAP_EVENT_CONNECT:
-        ESP_LOGI(TAG, "watch %s", event->connect.status == 0 ? "connected" : "failed to connect");
-        if (event->connect.status != 0)
-            advertise();
+        ESP_LOGI(TAG, "central %s", event->connect.status == 0 ? "connected" : "failed to connect");
+        if (event->connect.status == 0)
+            connection_opened(event->connect.conn_handle);
+        // Keep advertising while there's room for another connection, so a squatter can't
+        // lock the watch out.
+        advertise();
         break;
     case BLE_GAP_EVENT_DISCONNECT:
-        ESP_LOGI(TAG, "watch disconnected (reason 0x%x)", event->disconnect.reason);
+        ESP_LOGI(TAG, "central disconnected (reason 0x%x)", event->disconnect.reason);
+        connection_closed(event->disconnect.conn.conn_handle);
         advertise();
         break;
     case BLE_GAP_EVENT_ADV_COMPLETE:
@@ -289,8 +364,11 @@ static void advertise(void)
 
 static void on_sync(void)
 {
-    ble_hs_util_ensure_addr(0);
-    ble_hs_id_infer_auto(0, &own_addr_type);
+    if (ble_hs_util_ensure_addr(0) != 0 || ble_hs_id_infer_auto(0, &own_addr_type) != 0)
+    {
+        ESP_LOGE(TAG, "no usable BLE address: watch presence off (the button still works)");
+        return;
+    }
     uint8_t addr[6] = {0};
     ble_hs_id_copy_addr(own_addr_type, addr, NULL);
     ESP_LOGI(TAG, "advertising as tinycrypt (%02x:%02x:%02x:%02x:%02x:%02x)%s", addr[5], addr[4], addr[3],
@@ -310,7 +388,7 @@ static void host_task(void *param)
     nimble_port_freertos_deinit();
 }
 
-void ble_presence_start(void)
+bool ble_presence_start(void)
 {
     nvs_handle_t nvs;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK)
@@ -329,7 +407,7 @@ void ble_presence_start(void)
     if (nimble_port_init() != ESP_OK)
     {
         ESP_LOGE(TAG, "nimble_port_init failed: watch presence off (the button still works)");
-        return;
+        return false;
     }
     ble_hs_cfg.sync_cb = on_sync;
     ble_hs_cfg.reset_cb = on_reset;
@@ -338,8 +416,9 @@ void ble_presence_start(void)
     if (ble_gatts_count_cfg(services) != 0 || ble_gatts_add_svcs(services) != 0)
     {
         ESP_LOGE(TAG, "GATT registration failed: watch presence off");
-        return;
+        return true;  // the controller (and so the radio's entropy) is up
     }
     ble_svc_gap_device_name_set("tinycrypt");
     nimble_port_freertos_init(host_task);
+    return true;
 }

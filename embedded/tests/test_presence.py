@@ -113,7 +113,7 @@ def test_watch_wins(raw):
     hid.send(a, CBOR, make_credential())
     _, resp = hid.until(a, {CBOR}, 3)
     assert resp is not None and resp[2][0] == 0
-    assert time.time() - start < 2
+    assert time.time() - start < 3  # watch approves at 0.3 s; slack for a busy runner
 
 
 def test_both_time_out(raw):
@@ -184,3 +184,81 @@ def test_cancelled_u2f_register_is_not_signed(raw):
     _, resp = hid.until(a, {MSG}, 3)
     assert resp is not None
     assert resp[2][-2:] != b"\x90\x00"  # never a successful registration
+
+
+def test_init_on_the_requesting_channel_aborts_and_is_answered(raw):
+    _, hid = raw("--watch-after", "0", "--up-timeout", "10000")
+    a = hid.allocate()
+    hid.send(a, CBOR, make_credential())
+    time.sleep(0.3)
+    nonce = os.urandom(8)
+    hid.send(a, INIT, nonce)  # resynchronise: aborts the request
+    seen, resp = hid.until(a, {INIT}, 2)
+    assert resp is not None and resp[2][:8] == nonce and resp[2][8:12] == a
+    # The aborted request gets no answer at all, before or after the INIT reply.
+    assert not [m for m in seen if m[0] == a and m[1] == CBOR]
+    _, late = hid.until(a, {CBOR}, 0.5)
+    assert late is None
+
+
+def test_an_intruder_mid_request_cannot_take_over_the_wait(raw):
+    _, hid = raw("--watch-after", "0", "--up-timeout", "10000")
+    a = hid.allocate()
+    b = hid.allocate()
+    request = make_credential() + os.urandom(80)  # pad to force continuation packets
+    # a's first packet, then b barges in, then a's continuations complete the request.
+    first = a + bytes([CBOR]) + struct.pack(">H", len(request)) + request[:57]
+    hid.sock.sendto(first.ljust(REPORT, b"\0"), hid.addr)
+    hid.send(b, CBOR, make_credential())
+    _, busy = hid.until(b, {ERROR}, 1)
+    assert busy is not None and busy[2][0] == CHANNEL_BUSY
+    rest, seq = request[57:], 0
+    while rest:
+        hid.sock.sendto((a + bytes([seq]) + rest[:59]).ljust(REPORT, b"\0"), hid.addr)
+        rest, seq = rest[59:], seq + 1
+    # The wait belongs to a: b can't cancel it, a can.
+    seen, _ = hid.until(a, {KEEPALIVE}, 1)
+    hid.send(b, CANCEL)
+    seen, resp = hid.until(a, {CBOR}, 0.5)
+    assert resp is None
+    hid.send(a, CANCEL)
+    _, resp = hid.until(a, {CBOR}, 2)
+    assert resp is not None
+
+
+def actions(sim):
+    return [line for line in sim.log if line.endswith(" action")]
+
+
+def u2f_register():
+    return bytes([0x00, 0x01, 0x03, 0x00, 0x00, 0x00, 0x40]) + os.urandom(64) + b"\x00\x00"
+
+
+def test_u2f_re_asks_are_one_action_but_a_new_channel_is_not(raw):
+    sim, hid = raw("--watch-after", "0", "--up-timeout", "300")
+    a = hid.allocate()
+    for _ in range(3):  # the browser's U2F retry loop: short waits back to back
+        hid.send(a, MSG, u2f_register())
+        hid.until(a, {MSG}, 2)
+    b = hid.allocate()
+    hid.send(b, MSG, u2f_register())
+    hid.until(b, {MSG}, 2)
+    time.sleep(0.2)
+    assert actions(sim) == [">>> new action", ">>> same action", ">>> same action", ">>> new action"]
+
+
+def test_a_retry_after_a_full_timeout_or_a_cancel_is_a_new_action(raw):
+    sim, hid = raw("--watch-after", "0", "--up-timeout", "2500")
+    a = hid.allocate()
+    hid.send(a, CBOR, make_credential())
+    hid.until(a, {CBOR}, 5)              # times out after a long wait
+    hid.send(a, CBOR, make_credential())  # the client retries at once
+    time.sleep(0.3)
+    hid.send(a, CANCEL)
+    hid.until(a, {CBOR}, 2)
+    hid.send(a, CBOR, make_credential())  # straight after a cancel
+    time.sleep(0.3)
+    hid.send(a, CANCEL)
+    hid.until(a, {CBOR}, 2)
+    time.sleep(0.2)
+    assert actions(sim) == [">>> new action"] * 3

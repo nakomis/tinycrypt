@@ -106,7 +106,7 @@ static int transport_recv(uint8_t *msg, int timeout_ms)
 
 void usbhid_send(uint8_t *msg)
 {
-    if (!have_peer)
+    if (!have_peer || !presence_filter_send(msg))
         return;
     if (sendto(sock, msg, HID_MESSAGE_SIZE, 0, (struct sockaddr *)&peer, sizeof(peer)) < 0)
         perror("sendto");
@@ -157,6 +157,7 @@ static void watch_arm(void *ctx)
 {
     (void)ctx;
     watch_armed_at = millis();
+    fprintf(stderr, ">>> %s action\n", presence_is_new_action() ? "new" : "same");
 }
 
 static bool watch_approved(void *ctx)
@@ -171,6 +172,17 @@ static bool watch_approved(void *ctx)
 static void announce(void *ctx)
 {
     (void)ctx;
+    // A press only counts during a wait: throw away lines typed before it started.
+    for (;;)
+    {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(STDIN_FILENO, &fds);
+        struct timeval tv = {0, 0};
+        char line[64];
+        if (stdin_closed || select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) <= 0 || fgets(line, sizeof(line), stdin) == NULL)
+            break;
+    }
     fprintf(stderr, "\n>>> User presence requested: press Enter to approve\n");
 }
 
@@ -434,6 +446,11 @@ int main(int argc, char *argv[])
         {
             presence_note_report(msg);
             ctaphid_handle_packet(msg);
+            while (presence_take_deferred(msg))
+            {
+                presence_note_report(msg);
+                ctaphid_handle_packet(msg);
+            }
         }
         ctaphid_check_timeouts();
     }

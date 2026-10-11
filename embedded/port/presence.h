@@ -7,13 +7,24 @@
 // While waiting, CTAPHID traffic is handled here and never handed back to the core: solo1 keeps
 // the request's channel in a static buffer for the whole wait, and re-entering it (an INIT from
 // another client resets that buffer) sends later KEEPALIVEs to CID 0 and lets any channel CANCEL.
-//   - KEEPALIVE(UPNEEDED) every 100 ms, on the requesting channel.
-//   - CANCEL (or INIT, which resynchronises) on the requesting channel ends the wait: not present.
+//   - KEEPALIVE(UPNEEDED) every 100 ms, sent here to the requesting channel.
+//   - CANCEL on the requesting channel ends the wait: not present. The core then answers the
+//     request (CTAP2: ACTION_TIMEOUT, see below).
+//   - INIT on the requesting channel aborts the transaction, as CTAPHID specifies: the wait ends,
+//     the core's answer to the aborted request is dropped (presence_filter_send), and the INIT is
+//     replayed to the core afterwards (presence_take_deferred) so the client gets its INIT reply.
 //   - Anything that starts a request on another channel gets ERROR(CHANNEL_BUSY).
 //
 // Contract with solo1: the result is only ever 1 (present) or 0 (not present). A cancelled CTAP2
 // request therefore reports ACTION_TIMEOUT rather than KEEPALIVE_CANCEL: -1 can't be returned,
 // because solo1's U2F and wallet code treat any non-zero result as present.
+//
+// Port integration, in the CTAPHID receive loop:
+//     presence_note_report(report);       // before ctaphid_handle_packet()
+//     ctaphid_handle_packet(report);
+//     while (presence_take_deferred(report))
+//         ctaphid_handle_packet(report);  // an INIT that aborted a wait
+// and in the core's usbhid_send(): `if (!presence_filter_send(report)) return;`.
 #pragma once
 
 #include <stdbool.h>
@@ -21,6 +32,11 @@
 #include <stdint.h>
 
 #define PRESENCE_REPORT_SIZE 64
+
+// A short wait (U2F's 750 ms poll) followed within this long by another on the same channel is
+// the same user action: it shares one push and one watch challenge.
+#define PRESENCE_SAME_ACTION_GAP_MS 3000
+#define PRESENCE_SHORT_WAIT_MS 2000
 
 typedef struct presence_source
 {
@@ -39,16 +55,27 @@ typedef struct presence_io
     uint32_t (*now_ms)(void);
 } presence_io;
 
-// Ports call this with every report before passing it to ctaphid_handle_packet(), so the wait
-// knows which channel made the request.
+// Ports call this with every report, just before handing it to ctaphid_handle_packet(). A wait
+// can only start while the core handles the final packet of a request, so the last report noted
+// is the requesting channel's.
 void presence_note_report(const uint8_t report[PRESENCE_REPORT_SIZE]);
 
-// True while sources are being armed if this wait starts a new user action, false if it repeats
-// the last one. solo1's U2F path re-asks for presence every 750 ms while the browser retries; those
-// short, back-to-back waits are one action, so they share one push and one watch challenge. A new
-// action: the first wait, one after an approval, one after a gap of 3 s or more, or one after a
-// long wait (a CTAP2 wait that timed out, retried by the client).
+// The core's usbhid_send() asks this first; false means drop the report (it answers a
+// transaction the client aborted with INIT).
+bool presence_filter_send(const uint8_t report[PRESENCE_REPORT_SIZE]);
+
+// After ctaphid_handle_packet() returns: true (and the report) if a deferred INIT must now be
+// handed to the core.
+bool presence_take_deferred(uint8_t report[PRESENCE_REPORT_SIZE]);
+
+// While sources are being armed: true if this wait starts a new user action, false if it repeats
+// the last one (see PRESENCE_SAME_ACTION_GAP_MS). A new action: the first wait; one after an
+// approval or a cancel; one on a different channel; one after a gap of 3 s or more; or one after
+// a long wait (a CTAP2 wait that timed out and was retried).
 bool presence_is_new_action(void);
+
+// While sources are being disarmed: true if the requesting channel cancelled (CANCEL or INIT).
+bool presence_was_cancelled(void);
 
 // Arms every source and waits up to timeout_ms. Returns 1 if a source approved, else 0
 // (timed out, or cancelled by the requesting channel).
