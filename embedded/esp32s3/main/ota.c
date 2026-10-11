@@ -55,6 +55,8 @@ static int approval_result;
 static char *job_url;
 static char job_version[OTA_VERSION_MAX];
 static uint8_t job_sha256[OTA_SHA256_LEN];
+static int64_t job_finished_us;  // when the last update ended (in failure: success restarts)
+#define REDELIVERY_WINDOW_US (30 * 1000000LL)
 static uint8_t approval_hash[32];
 static char approval_label[OTA_LABEL_MAX];
 
@@ -188,6 +190,27 @@ void ota_on_connected(void)
 
 // ---- download and checks ------------------------------------------------------------
 
+// "<what> (tls ... errno ... heap free/largest)": the key's log is usually out of reach (the native
+// USB port is the key), so a failure says why itself: the TLS stack's error and certificate-verify
+// flags, the socket's errno, and how much internal RAM there was.
+static const char *explain(esp_http_client_handle_t http, const char *what, char *why, size_t why_len)
+{
+    int tls_code = 0, tls_flags = 0;
+    esp_err_t tls = esp_http_client_get_and_clear_last_tls_error(http, &tls_code, &tls_flags);
+    snprintf(why, why_len, "download failed: %s (tls %s -0x%x flags 0x%x, errno %d, heap %u/%u)", what,
+             esp_err_to_name(tls), (unsigned)-tls_code, (unsigned)tls_flags, esp_http_client_get_errno(http),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    ESP_LOGE(TAG, "%s", why);
+    return why;
+}
+
+static void log_heap(const char *when)
+{
+    ESP_LOGI(TAG, "%s: heap %u free, largest block %u", when, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+}
+
 // Returns NULL on success, else the reason (for ota_error).
 static const char *download(const esp_partition_t *slot, char *why, size_t why_len)
 {
@@ -211,22 +234,17 @@ static const char *download(const esp_partition_t *slot, char *why, size_t why_l
         err_text = "download failed: out of memory";
         goto out;
     }
+    log_heap("before connecting");
     esp_err_t err = esp_http_client_open(http, 0);
     if (err != ESP_OK)
     {
-        // Say why, since the key's log is usually out of reach (the native USB port is the key): the
-        // TLS stack's error and certificate-verify flags, and how much internal RAM there was.
-        int tls_code = 0, tls_flags = 0;
-        esp_err_t tls = esp_http_client_get_and_clear_last_tls_error(http, &tls_code, &tls_flags);
-        snprintf(why, why_len, "download failed: %s (tls %s -0x%x flags 0x%x, heap %u/%u)", esp_err_to_name(err),
-                 esp_err_to_name(tls), (unsigned)-tls_code, (unsigned)tls_flags,
-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-        err_text = why;
+        err_text = explain(http, esp_err_to_name(err), why, why_len);
         goto out;
     }
+    log_heap("connected");
     int64_t length = esp_http_client_fetch_headers(http);
     int status = esp_http_client_get_status_code(http);
+    ESP_LOGI(TAG, "HTTP %d, %" PRId64 " bytes", status, length);
     if (status != 200)
     {
         snprintf(why, why_len, "download failed: HTTP %d", status);
@@ -249,6 +267,7 @@ static const char *download(const esp_partition_t *slot, char *why, size_t why_l
     mbedtls_sha256_starts(&sha, 0);
     size_t total = 0;
     int last_tenth = -1;
+    int stalls = 0;
     for (;;)
     {
         if (cancel)
@@ -257,11 +276,19 @@ static const char *download(const esp_partition_t *slot, char *why, size_t why_l
             goto out;
         }
         int n = esp_http_client_read(http, (char *)buf, READ_CHUNK);
+        if (n == -ESP_ERR_HTTP_EAGAIN && ++stalls <= 3)
+        {
+            ESP_LOGW(TAG, "read timed out after %u bytes: retrying", (unsigned)total);
+            continue;
+        }
         if (n < 0)
         {
-            err_text = "download failed: read error";
+            char what[48];
+            snprintf(what, sizeof(what), "read %d after %u bytes", n, (unsigned)total);
+            err_text = explain(http, what, why, why_len);
             goto out;
         }
+        stalls = 0;
         if (n == 0)
         {
             if (!esp_http_client_is_complete_data_received(http))
@@ -336,6 +363,7 @@ static void finish(void)
     taskEXIT_CRITICAL(&lock);
     free(job_url);
     job_url = NULL;
+    job_finished_us = esp_timer_get_time();
 }
 
 static void ota_task(void *arg)
@@ -436,6 +464,16 @@ static void start_update(const ota_cmd *cmd)
         respond_error("ota_error", "out of memory", cmd->version);
         return;
     }
+    // IoT Core redelivers a command whose PUBACK was slow (the MQTT task is starved while a download
+    // runs), sometimes after the update has already failed: don't start it all over again.
+    bool same = strcmp(cmd->version, job_version) == 0 && memcmp(cmd->sha256, job_sha256, sizeof(job_sha256)) == 0;
+    if (same && phase == IDLE && job_finished_us != 0 && esp_timer_get_time() - job_finished_us < REDELIVERY_WINDOW_US)
+    {
+        ESP_LOGI(TAG, "update to %s again within %lld s of the last: a redelivery, ignored", cmd->version,
+                 REDELIVERY_WINDOW_US / 1000000);
+        free(url);
+        return;
+    }
     taskENTER_CRITICAL(&lock);
     bool busy = phase != IDLE;
     if (!busy)
@@ -449,7 +487,7 @@ static void start_update(const ota_cmd *cmd)
         free(url);
         // IoT Core redelivers a command whose PUBACK was slow (the MQTT task is starved while a
         // download runs): the same update again is that, not a second request.
-        if (strcmp(cmd->version, job_version) == 0 && memcmp(cmd->sha256, job_sha256, sizeof(job_sha256)) == 0)
+        if (same)
             ESP_LOGI(TAG, "update to %s again: already under way", cmd->version);
         else
             respond_error("ota_error", "busy", cmd->version);
