@@ -33,9 +33,22 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   multi-packet CTAPHID reply). After flashing over the native port, press RST; a USB reset leaves
   it in download mode. `bootloader_random_enable()` feeds the RNG while no radio is on; call
   `bootloader_random_disable()` before starting BLE/Wi-Fi or using the ADC.
+- **Presence wait** (CRYPT-13, `port/presence.c`, shared by the sim and the ESP32): every source (button,
+  watch over BLE, push notifier) is armed; the first to approve wins. During the wait CTAPHID is handled
+  there, never by re-entering solo1 (whose static buffer holds the request's channel): KEEPALIVE to the
+  requesting CID, CANCEL/INIT only from that CID end it, other channels get CHANNEL_BUSY.
+  `presence_is_new_action()` groups U2F's 750 ms re-asks into one action (one push, one challenge); a
+  retry after a full timeout is a new one. Sim: `--presence button+watch --watch-after MS --up-timeout MS`.
+- **Watch over BLE on the key** (`esp32s3/main/ble_presence.c`, NimBLE, `CONFIG_TINYCRYPT_WATCH_BLE`): the
+  key advertises the protocol-v0 GATT service; a challenge (`"tinycrypt-presence-v0" ‖ nonce32`) is
+  readable only during a wait and approves once. **Enrol:** hold BOOT 5 s while idle (not at power-up:
+  that's download mode) for a 60 s window; the watch taps "Enrol with key". Its public key is in NVS
+  (`watch_pub`), so reflashing keeps it. Wi-Fi runs modem sleep alongside BLE (ESP-IDF requires it).
+  Measured: tap on Approve → key verified 1.5–1.9 s, app in the background.
 - **Presence contract** (`ctap_user_presence_test`): return only 1 (present), 0 (absent, cancelled
   or timed out) or 2 (check disabled by the request). solo1's U2F code tests `== 0` / `!ret`, so
-  any other value (e.g. -1 for cancel) counts as present and signs without a press.
+  any other value (e.g. -1 for cancel) counts as present and signs without a press. (solo1's
+  `extensions/wallet.c` too, even on CTAP2 paths, so a cancelled CTAP2 wait reports ACTION_TIMEOUT 0x3A.)
   `test_u2f_respects_denied_presence` guards this.
 - **CI**: the "Protect main" ruleset requires a check named exactly `CI Status`.
 - **Software key is INSECURE, TEST ONLY**: gated behind `TINYCRYPT_INSECURE_SOFT_KEY`, loud boot
