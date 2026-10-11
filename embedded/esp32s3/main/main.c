@@ -3,7 +3,8 @@
 // - Transport: one HID interface on the FIDO usage page (0xF1D0), 64-byte
 //   reports on interrupt IN/OUT endpoints. TinyUSB runs in its own task and
 //   queues OUT reports; the CTAP task drains the queue.
-// - Presence: the BOOT button (GPIO0, active low) until the watch exists.
+// - Presence: the BOOT button (GPIO0, active low). With CONFIG_TINYCRYPT_NOTIFIER, a
+//   request also goes to the watch (notifier.c); the button still works on its own.
 // - Keystore: INSECURE software key. Master secret, resident keys and the
 //   sign counter live in plain NVS. TEST ONLY.
 #include <stdbool.h>
@@ -36,6 +37,10 @@
 #include "util.h"
 #ifdef TINYCRYPT_SE_SELFTEST
 #include "se_selftest.h"
+#endif
+#include "sdkconfig.h"
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+#include "notifier.h"
 #endif
 #include APP_CONFIG
 
@@ -207,11 +212,8 @@ static bool button_down(void)
 //
 // Presence needs a fresh press: the button must be seen released after the
 // request starts, so a held or stuck button approves nothing.
-int ctap_user_presence_test(uint32_t delay_ms)
+static int wait_for_button(uint32_t delay_ms)
 {
-    if (up_disabled)
-        return 2;
-    ESP_LOGI(TAG, "user presence requested: press BOOT");
     uint32_t start = millis();
     uint32_t next_keepalive = start;
     bool seen_released = false;
@@ -239,6 +241,23 @@ int ctap_user_presence_test(uint32_t delay_ms)
     }
     ESP_LOGI(TAG, "presence timed out");
     return 0;
+}
+
+int ctap_user_presence_test(uint32_t delay_ms)
+{
+    if (up_disabled)
+        return 2;
+    ESP_LOGI(TAG, "user presence requested: press BOOT");
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+    // Ask the watch too, once per user action. Best effort: the button works whether or not
+    // the request got out.
+    notifier_presence_wait_started();
+    int result = wait_for_button(delay_ms);
+    notifier_presence_wait_ended(result);
+    return result;
+#else
+    return wait_for_button(delay_ms);
+#endif
 }
 
 // ---- rng, counter, state (INSECURE: plain NVS) ------------------------------
@@ -402,6 +421,10 @@ void app_main(void)
     // No radio is on, so use the ADC noise source for esp_fill_random().
     // Must be disabled again before Wi-Fi/BLE or the ADC are used.
     bootloader_random_enable();
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+    // Disables the ADC source again and brings up the radio, which replaces it.
+    notifier_start();
+#endif
 
     gpio_config_t button = {
         .pin_bit_mask = 1ULL << BUTTON_GPIO,

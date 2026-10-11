@@ -1,6 +1,7 @@
 # Name,   Type, SubType,  Offset,  Size
-# nvs/phy/factory match IDF's single-app default, so existing NVS data survives.
+# nvs/phy match IDF's single-app default, so existing NVS data survives. factory is 1.75 MB for
+# Wi-Fi + TLS + MQTT (CRYPT-15) and still fits a 2 MB flash with the core dump.
 nvs,      data, nvs,      0x9000,  0x6000
 phy_init, data, phy,      0xf000,  0x1000
-factory,  app,  factory,  0x10000, 1M
+factory,  app,  factory,  0x10000, 1792K
 coredump, data, coredump, ,        64K

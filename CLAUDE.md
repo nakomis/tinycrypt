@@ -24,7 +24,11 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
 - **CTAP2 core is SoloKeys solo1** (Apache-2.0 OR MIT), a submodule in `embedded/third_party/solo1`; never
   copy its code into our CC0 tree. Ports override its `__attribute__((weak))` device hooks; the
   ESP32 `main` component is `WHOLE_ARCHIVE` so the strong ones always win.
-- **ESP32-S3 gotchas**: the key is on the *native* USB port, not the UART one. Short FreeRTOS waits
+- **ESP32-S3 gotchas**: the key is on the *native* USB port (the **left** one), not the UART one
+  (CH343, right). **The board only connects one USB port at a time**: whichever wins at power-up
+  enumerates and the other stays dark, which on 8 Oct looked like a string of charge-only cables.
+  To swap, unplug the one you don't want and power-cycle the board. Use UART for flashing and logs
+  (`flash-manual.sh`, after BOOT+RST; auto-reset doesn't work on macOS), native for CTAP tests. Short FreeRTOS waits
   need `CONFIG_FREERTOS_HZ=1000` (at 100 Hz `pdMS_TO_TICKS(1)` is 0, which once dropped every
   multi-packet CTAPHID reply). After flashing over the native port, press RST; a USB reset leaves
   it in download mode. `bootloader_random_enable()` feeds the RNG while no radio is on; call
@@ -66,13 +70,29 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   - **Watch-side gate**: the Secure Enclave key has no access control flags, so anyone who can tap
     Approve on the unlocked watch approves. That's the intended presence check, not a second factor.
 
-- **Push path** (CRYPT-12): the key publishes to `tinycrypt/{env}/presence/request`; an IoT rule's SNS
+- **Push path** (CRYPT-12): each key publishes to its own `tinycrypt/{env}/presence/{thing}/request`
+  (CRYPT-15: its IoT policy allows no other topic, so one key can't pose as another); an IoT rule's SNS
   action sends it to the `tinycrypt-presence-{env}` topic, and SNS delivers it to the watch's APNs
   platform endpoint. **No Lambda** (Martin's call): sign-ins are rare, so a Lambda would nearly always be
   cold (+~0.9 s measured). The key publishes SNS's JSON message structure itself:
   `{"default": "...", "APNS_SANDBOX": "<APNs payload as a JSON string>"}` (`APNS` in prod), with
   category `PRESENCE`. Measured on a real watch: publish → on the watch 1.3–2.4 s; SNS holds a
   message for 25–44 ms (`dwellTimeMs` in its delivery logs).
+- **Notifier firmware** (CRYPT-15, `esp32s3/main/notifier.c`, off unless `CONFIG_TINYCRYPT_NOTIFIER`):
+  Wi-Fi (no power saving), SNTP, and esp-mqtt held open to IoT Core with the key's own X.509
+  certificate. A presence request is sent once per user action, not per `ctap_user_presence_test` call
+  (solo1's U2F path re-asks every 750 ms while the browser retries; without this, one sign-in sent dozens
+  of pushes). It is enqueued at QoS 1 for the MQTT task (normally no blocking), and the outbox drops it
+  after 10 s unsent, so a reconnect can't deliver a stale prompt. Setup failures switch the notifier off
+  rather than aborting; the BOOT button works regardless. `infra/scripts/provision-key.sh [key-N] [--new]`
+  makes (or with `--new` replaces, retiring the old one) the certificate and writes
+  `esp32s3/certs/<thing>/` and `esp32s3/sdkconfig.secrets` (Wi-Fi from SSM
+  `/Nakomis/Wifi/*`), both uncommitted; then `rm esp32s3/sdkconfig` and rebuild. Each key is an IoT
+  Thing (`TinycryptKeyStack`) whose policy allows connecting only as itself and publishing only presence
+  requests. INSECURE, TEST ONLY: that private key sits in flash; the ATECC608 replaces it. Measured on the
+  board: key publish → on the watch 1.3–1.5 s. The app partition is 1.75 MB for the network stack.
+- **Push content is device-supplied**: the key writes the alert text, which goes to APNs verbatim.
+  Fine while keys are ours; the push carries no authority anyway (approval needs the signed BLE challenge).
 - **Stale prompts**: an IoT SNS action can't set message attributes, so there's no
   `AWS.SNS.MOBILE.APNS.TTL`, and APNs may store a push for an offline watch and deliver it late. The
   real guard is the key: its BLE challenge is single-use and expires with the CTAP request, so a late

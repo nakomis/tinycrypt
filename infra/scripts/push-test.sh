@@ -17,7 +17,7 @@ export AWS_REGION=${AWS_REGION:-eu-west-2}
 platform=$([ "$env" = prod ] && echo APNS || echo APNS_SANDBOX)
 
 endpoint=$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)
-topic="tinycrypt/${env}/presence/request"
+topic="tinycrypt/${env}/presence/mac-test/request"
 
 for i in $(seq 1 "$count"); do
     id="run-$(date +%H%M%S)-$i"
