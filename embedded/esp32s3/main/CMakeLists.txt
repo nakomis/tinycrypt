@@ -2,6 +2,9 @@ include(${COMPONENT_DIR}/../../cmake/solo_sources.cmake)
 
 set(srcs main.c ${TINYCRYPT_PORT_SOURCES})
 set(embed "")
+if(CONFIG_TINYCRYPT_WATCH_BLE)
+  list(APPEND srcs ble_presence.c)
+endif()
 # The notifier (CRYPT-15) needs the key's certificate from infra/scripts/provision-key.sh.
 if(CONFIG_TINYCRYPT_NOTIFIER)
   list(APPEND srcs notifier.c)
@@ -22,7 +25,7 @@ endif()
 idf_component_register(
   SRCS ${srcs}
   PRIV_REQUIRES solo_core nvs_flash esp_driver_gpio esp_timer bootloader_support espcoredump mbedtls
-                esp_wifi esp_netif esp_event mqtt json
+                esp_wifi esp_netif esp_event mqtt json bt
   EMBED_TXTFILES ${embed}
   WHOLE_ARCHIVE
 )

@@ -23,6 +23,7 @@
 #include <unistd.h>
 
 #include "ctap.h"
+#include "presence.h"
 #include "ctaphid.h"
 #include "device.h"
 #include "log.h"
@@ -32,13 +33,17 @@
 
 #define RK_NUM 50
 
-typedef enum { PRESENCE_AUTO, PRESENCE_DENY, PRESENCE_PROMPT } presence_mode_t;
+// prompt = the button alone (Enter on stdin); button+watch = the button or a scripted watch
+// that approves --watch-after ms into each wait (0: never), whichever comes first.
+typedef enum { PRESENCE_AUTO, PRESENCE_DENY, PRESENCE_PROMPT, PRESENCE_BUTTON_WATCH } presence_mode_t;
 
 static int sock = -1;
 static struct sockaddr_in peer;
 static bool have_peer = false;
 static presence_mode_t presence_mode = PRESENCE_AUTO;
 static bool up_disabled = false;
+static uint32_t watch_after_ms = 0;
+static uint32_t up_timeout_ms = 0;  // 0: the core's own timeout
 static char state_path[1024];
 static char rk_path[1024];
 static char counter_path[1024];
@@ -101,7 +106,7 @@ static int transport_recv(uint8_t *msg, int timeout_ms)
 
 void usbhid_send(uint8_t *msg)
 {
-    if (!have_peer)
+    if (!have_peer || !presence_filter_send(msg))
         return;
     if (sendto(sock, msg, HID_MESSAGE_SIZE, 0, (struct sockaddr *)&peer, sizeof(peer)) < 0)
         perror("sendto");
@@ -120,6 +125,84 @@ void device_disable_up(bool disable)
     up_disabled = disable;
 }
 
+// The button: a line on stdin. If stdin closes, nobody can ever press it.
+static bool stdin_closed = false;
+
+static bool button_approved(void *ctx)
+{
+    (void)ctx;
+    if (stdin_closed)
+        return false;
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+    struct timeval tv = {0, 0};
+    if (select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) <= 0)
+        return false;
+    char line[64];
+    if (fgets(line, sizeof(line), stdin) != NULL)
+    {
+        fprintf(stderr, ">>> button pressed\n");
+        return true;
+    }
+    fprintf(stderr, ">>> stdin closed, the button can't be pressed\n");
+    stdin_closed = true;
+    return false;
+}
+
+// The watch, scripted: approves watch_after_ms into the wait.
+static uint32_t watch_armed_at;
+
+static void watch_arm(void *ctx)
+{
+    (void)ctx;
+    watch_armed_at = millis();
+    fprintf(stderr, ">>> %s action\n", presence_is_new_action() ? "new" : "same");
+}
+
+static bool watch_approved(void *ctx)
+{
+    (void)ctx;
+    if (watch_after_ms == 0 || millis() - watch_armed_at < watch_after_ms)
+        return false;
+    fprintf(stderr, ">>> watch approved\n");
+    return true;
+}
+
+static void announce(void *ctx)
+{
+    (void)ctx;
+    // A press only counts during a wait: throw away lines typed before it started.
+    for (;;)
+    {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(STDIN_FILENO, &fds);
+        struct timeval tv = {0, 0};
+        char line[64];
+        if (stdin_closed || select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) <= 0 || fgets(line, sizeof(line), stdin) == NULL)
+            break;
+    }
+    fprintf(stderr, "\n>>> User presence requested: press Enter to approve\n");
+}
+
+static void report_result(void *ctx, int result)
+{
+    (void)ctx;
+    fprintf(stderr, ">>> presence %s\n", result ? "approved" : "not given");
+}
+
+static const presence_source button_source = {"button", NULL, announce, button_approved, report_result};
+static const presence_source watch_source = {"watch", NULL, watch_arm, watch_approved, NULL};
+
+static int sim_recv(uint8_t report[PRESENCE_REPORT_SIZE], uint32_t timeout_ms)
+{
+    memset(report, 0, PRESENCE_REPORT_SIZE);
+    return transport_recv(report, (int)timeout_ms);
+}
+
+static const presence_io sim_io = {sim_recv, usbhid_send, millis};
+
 // Contract with solo1: 1 = present, 0 = not present, 2 = check disabled by
 // the request. NEVER return anything else: solo1's U2F code tests only
 // `== 0` / `!ret`, so any other value counts as present.
@@ -127,6 +210,7 @@ int ctap_user_presence_test(uint32_t delay_ms)
 {
     if (up_disabled)
         return 2;
+    uint32_t timeout = up_timeout_ms ? up_timeout_ms : delay_ms;
     switch (presence_mode)
     {
     case PRESENCE_AUTO:
@@ -135,28 +219,13 @@ int ctap_user_presence_test(uint32_t delay_ms)
         return 0;
     case PRESENCE_PROMPT:
     {
-        fprintf(stderr, "\n>>> User presence requested: press Enter within %u s to approve\n",
-                (unsigned)(delay_ms / 1000));
-        uint32_t start = millis();
-        while (millis() - start < delay_ms)
-        {
-            ctaphid_update_status(CTAPHID_STATUS_UPNEEDED);
-            fd_set fds;
-            FD_ZERO(&fds);
-            FD_SET(STDIN_FILENO, &fds);
-            struct timeval tv = {0, 100 * 1000};
-            if (select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0)
-            {
-                char line[64];
-                if (fgets(line, sizeof(line), stdin) != NULL)
-                    return 1;
-                // stdin closed: nobody can ever approve, so don't spin.
-                fprintf(stderr, ">>> stdin closed, presence denied\n");
-                return 0;
-            }
-        }
-        fprintf(stderr, ">>> Timed out\n");
-        return 0;
+        const presence_source *sources[] = {&button_source};
+        return presence_wait(timeout, sources, 1, &sim_io);
+    }
+    case PRESENCE_BUTTON_WATCH:
+    {
+        const presence_source *sources[] = {&button_source, &watch_source};
+        return presence_wait(timeout, sources, 2, &sim_io);
     }
     }
     return 0;
@@ -289,7 +358,8 @@ static void on_signal(int sig)
 static void usage(const char *argv0)
 {
     fprintf(stderr,
-            "usage: %s [--port N] [--state-dir DIR] [--presence auto|deny|prompt]\n",
+            "usage: %s [--port N] [--state-dir DIR] [--presence auto|deny|prompt|button+watch]\n"
+            "          [--watch-after MS] [--up-timeout MS]\n",
             argv0);
     exit(2);
 }
@@ -303,10 +373,12 @@ int main(int argc, char *argv[])
         {"port", required_argument, NULL, 'p'},
         {"state-dir", required_argument, NULL, 's'},
         {"presence", required_argument, NULL, 'u'},
+        {"watch-after", required_argument, NULL, 'w'},
+        {"up-timeout", required_argument, NULL, 't'},
         {NULL, 0, NULL, 0},
     };
     int c;
-    while ((c = getopt_long(argc, argv, "p:s:u:", opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "p:s:u:w:t:", opts, NULL)) != -1)
     {
         switch (c)
         {
@@ -323,8 +395,16 @@ int main(int argc, char *argv[])
                 presence_mode = PRESENCE_DENY;
             else if (strcmp(optarg, "prompt") == 0)
                 presence_mode = PRESENCE_PROMPT;
+            else if (strcmp(optarg, "button+watch") == 0)
+                presence_mode = PRESENCE_BUTTON_WATCH;
             else
                 usage(argv[0]);
+            break;
+        case 'w':
+            watch_after_ms = (uint32_t)atoi(optarg);
+            break;
+        case 't':
+            up_timeout_ms = (uint32_t)atoi(optarg);
             break;
         default:
             usage(argv[0]);
@@ -350,7 +430,10 @@ int main(int argc, char *argv[])
     ctaphid_init();
     ctap_init();
     fprintf(stderr, "tinycrypt sim listening on udp://127.0.0.1:%u (presence=%s)\n", port,
-            presence_mode == PRESENCE_AUTO ? "auto" : presence_mode == PRESENCE_DENY ? "deny" : "prompt");
+            presence_mode == PRESENCE_AUTO     ? "auto"
+            : presence_mode == PRESENCE_DENY   ? "deny"
+            : presence_mode == PRESENCE_PROMPT ? "prompt"
+                                               : "button+watch");
     // Readiness line for test harnesses.
     printf("READY %u\n", port);
     fflush(stdout);
@@ -360,7 +443,15 @@ int main(int argc, char *argv[])
     {
         memset(msg, 0, sizeof(msg));
         if (transport_recv(msg, 10) > 0)
+        {
+            presence_note_report(msg);
             ctaphid_handle_packet(msg);
+            while (presence_take_deferred(msg))
+            {
+                presence_note_report(msg);
+                ctaphid_handle_packet(msg);
+            }
+        }
         ctaphid_check_timeouts();
     }
 }

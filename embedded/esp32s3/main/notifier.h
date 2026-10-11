@@ -9,12 +9,13 @@
 
 // Starts Wi-Fi, SNTP and MQTT in the background and returns at once. Switches the ADC entropy
 // source off first, since the radio replaces it (bootloader_random_disable()). On any setup
-// failure it logs and gives up: the key carries on with the button alone.
-void notifier_start(void);
+// failure it logs and gives up: the key carries on with the button alone. Returns true once Wi-Fi
+// (and so the radio's entropy) has started.
+bool notifier_start(void);
 
-// Bracket every ctap_user_presence_test() call. solo1 asks again and again for one user action
-// (U2F polls every 750 ms while the browser retries), so a request is only sent when a wait
-// starts a new action: the previous wait was approved, or ended more than a few seconds ago.
-// Neither call normally blocks: the publish is queued for the MQTT task.
+// Call as each presence wait is armed. Sends a request only when the wait starts a new user action
+// (presence_is_new_action()). Doesn't normally block: the publish is queued for the MQTT task.
 void notifier_presence_wait_started(void);
-void notifier_presence_wait_ended(int presence_result);
+
+// Call as each presence wait ends: drops a request still held for a connection.
+void notifier_presence_wait_ended(void);

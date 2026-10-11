@@ -3,8 +3,10 @@
 // - Transport: one HID interface on the FIDO usage page (0xF1D0), 64-byte
 //   reports on interrupt IN/OUT endpoints. TinyUSB runs in its own task and
 //   queues OUT reports; the CTAP task drains the queue.
-// - Presence: the BOOT button (GPIO0, active low). With CONFIG_TINYCRYPT_NOTIFIER, a
-//   request also goes to the watch (notifier.c); the button still works on its own.
+// - Presence: the BOOT button (GPIO0, active low) OR the watch, whichever answers first
+//   (port/presence.c). With CONFIG_TINYCRYPT_NOTIFIER a push asks the watch; with
+//   CONFIG_TINYCRYPT_WATCH_BLE the watch approves by signing a BLE challenge (ble_presence.c).
+//   The button always works on its own. Hold it 5 s while idle to open the watch enrol window.
 // - Keystore: INSECURE software key. Master secret, resident keys and the
 //   sign counter live in plain NVS. TEST ONLY.
 #include <stdbool.h>
@@ -38,9 +40,13 @@
 #ifdef TINYCRYPT_SE_SELFTEST
 #include "se_selftest.h"
 #endif
+#include "presence.h"
 #include "sdkconfig.h"
 #ifdef CONFIG_TINYCRYPT_NOTIFIER
 #include "notifier.h"
+#endif
+#ifdef CONFIG_TINYCRYPT_WATCH_BLE
+#include "ble_presence.h"
 #endif
 #include APP_CONFIG
 
@@ -57,6 +63,8 @@ static const char *TAG = "tinycrypt";
 #define RK_NUM 10
 #define REPORT_SIZE 64
 #define NVS_NAMESPACE "tinycrypt"
+#define ENROL_HOLD_MS 5000
+#define ENROL_WINDOW_S 60
 
 static QueueHandle_t rx_queue;
 static nvs_handle_t nvs;
@@ -136,6 +144,8 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
 // endpoint to drain the previous one (time-based: a tick may be longer than 1 ms).
 void usbhid_send(uint8_t *msg)
 {
+    if (!presence_filter_send(msg))
+        return;  // answers a transaction the client aborted with INIT (presence.h)
     int64_t until = esp_timer_get_time() + 100 * 1000;
     while (!tud_hid_ready() && esp_timer_get_time() < until)
         vTaskDelay(1);
@@ -180,22 +190,6 @@ void device_disable_up(bool disable)
     up_disabled = disable;
 }
 
-// Keep servicing CTAPHID while waiting, so the host can CANCEL. Returns false
-// if the request was cancelled.
-// TODO(CRYPT-13): only honour CANCEL from the requesting channel, and answer
-// other channels with CHANNEL_BUSY instead of re-entering the core.
-static bool pump(uint32_t ms)
-{
-    uint8_t msg[REPORT_SIZE];
-    uint32_t until = millis() + ms;
-    while ((int32_t)(until - millis()) > 0)
-    {
-        if (usbhid_recv(msg, pdMS_TO_TICKS(5)) > 0 && ctaphid_handle_packet(msg) == CTAPHID_CANCEL)
-            return false;
-    }
-    return true;
-}
-
 // Debounced: pressed on two reads 10 ms apart.
 static bool button_down(void)
 {
@@ -205,59 +199,84 @@ static bool button_down(void)
     return button_pressed();
 }
 
+// The button as a presence source. Presence needs a fresh press: the button must be seen released
+// after the wait starts, so a held or stuck button approves nothing.
+static bool seen_released;
+
+static void button_arm(void *ctx)
+{
+    (void)ctx;
+    seen_released = false;
+    ESP_LOGI(TAG, "user presence requested: press BOOT%s",
+#ifdef CONFIG_TINYCRYPT_WATCH_BLE
+             ble_presence_enrolled() ? " or approve on the watch" : "");
+#else
+             "");
+#endif
+}
+
+static bool button_approved(void *ctx)
+{
+    (void)ctx;
+    if (!button_pressed())
+        seen_released = true;
+    else if (seen_released && button_down())
+        return true;
+    return false;
+}
+
+static void report_result(void *ctx, int result)
+{
+    (void)ctx;
+    ESP_LOGI(TAG, "presence %s", result ? "approved" : "not given (timed out or cancelled)");
+}
+
+static const presence_source button_source = {"button", NULL, button_arm, button_approved, report_result};
+
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+static void notifier_arm(void *ctx)
+{
+    (void)ctx;
+    notifier_presence_wait_started();
+}
+
+static void notifier_disarm(void *ctx, int result)
+{
+    (void)ctx;
+    (void)result;
+    notifier_presence_wait_ended();
+}
+
+// Sends the push; never approves (the watch's answer comes back over BLE).
+static const presence_source notifier_source = {"push", NULL, notifier_arm, NULL, notifier_disarm};
+#endif
+
+static int presence_recv(uint8_t report[PRESENCE_REPORT_SIZE], uint32_t timeout_ms)
+{
+    return usbhid_recv(report, pdMS_TO_TICKS(timeout_ms));
+}
+
+static const presence_io usb_io = {presence_recv, usbhid_send, millis};
+
 // Contract with solo1: 1 = present, 0 = not present, 2 = check disabled by
 // the request. NEVER return anything else. solo1's U2F code tests only `== 0`
 // / `!ret`, so a -1 for "cancelled" would count as present and sign without
-// a press. Cancel and timeout both return 0.
-//
-// Presence needs a fresh press: the button must be seen released after the
-// request starts, so a held or stuck button approves nothing.
-static int wait_for_button(uint32_t delay_ms)
-{
-    uint32_t start = millis();
-    uint32_t next_keepalive = start;
-    bool seen_released = false;
-    while (millis() - start < delay_ms)
-    {
-        // KEEPALIVE(UPNEEDED) every 100 ms, as the spec asks; sample the button
-        // every ~5 ms in between so a quick tap isn't missed.
-        if ((int32_t)(millis() - next_keepalive) >= 0)
-        {
-            ctaphid_update_status(CTAPHID_STATUS_UPNEEDED);
-            next_keepalive += 100;
-        }
-        if (!pump(5))
-        {
-            ESP_LOGI(TAG, "presence cancelled by host");
-            return 0;
-        }
-        if (!button_pressed())
-            seen_released = true;
-        else if (seen_released && button_down())
-        {
-            ESP_LOGI(TAG, "presence approved");
-            return 1;
-        }
-    }
-    ESP_LOGI(TAG, "presence timed out");
-    return 0;
-}
-
+// a press. presence_wait() returns only 1 or 0.
 int ctap_user_presence_test(uint32_t delay_ms)
 {
     if (up_disabled)
         return 2;
-    ESP_LOGI(TAG, "user presence requested: press BOOT");
-#ifdef CONFIG_TINYCRYPT_NOTIFIER
-    // Ask the watch too, once per user action. Best effort: the button works whether or not
-    // the request got out.
-    notifier_presence_wait_started();
-    int result = wait_for_button(delay_ms);
-    notifier_presence_wait_ended(result);
-    return result;
-#else
-    return wait_for_button(delay_ms);
+    // The button first, so a press is never missed behind slower sources.
+    const presence_source *sources[] = {
+        &button_source,
+#ifdef CONFIG_TINYCRYPT_WATCH_BLE
+        &ble_presence_source,
 #endif
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+        &notifier_source,
+#endif
+    };
+    return presence_wait(delay_ms, sources, sizeof(sources) / sizeof(sources[0]), &usb_io);
 }
 
 // ---- rng, counter, state (INSECURE: plain NVS) ------------------------------
@@ -371,6 +390,29 @@ static void report_last_crash(void)
     printf("%s\n", summary.exc_bt_info.corrupted ? " (corrupted)" : "");
 }
 
+#ifdef CONFIG_TINYCRYPT_WATCH_BLE
+// Holding BOOT for 5 s while idle opens the watch enrol window. (Held at power-up, BOOT means
+// download mode instead; during a presence wait, a press is presence.)
+static void check_enrol_hold(void)
+{
+    static uint32_t held_since;
+    static bool opened;
+    if (!button_pressed())
+    {
+        held_since = 0;
+        opened = false;
+        return;
+    }
+    if (held_since == 0)
+        held_since = millis() | 1;
+    else if (!opened && millis() - held_since >= ENROL_HOLD_MS)
+    {
+        ble_presence_open_enrol(ENROL_WINDOW_S);
+        opened = true;
+    }
+}
+#endif
+
 static void ctap_task(void *arg)
 {
 #ifdef TINYCRYPT_SE_SELFTEST
@@ -387,9 +429,15 @@ static void ctap_task(void *arg)
     {
         if (usbhid_recv(msg, pdMS_TO_TICKS(10)) > 0)
         {
+            presence_note_report(msg);
             ctaphid_handle_packet(msg);
-            // The core nests a second CTAP_RESPONSE when packets arrive during a
-            // presence wait; watch how close that gets to the stack limit.
+            while (presence_take_deferred(msg))
+            {
+                presence_note_report(msg);
+                ctaphid_handle_packet(msg);
+            }
+            // The presence wait runs inside ctaphid_handle_packet(); watch how close it gets
+            // to the stack limit.
             UBaseType_t free_now = uxTaskGetStackHighWaterMark(NULL);
             if (free_now < low_water)
             {
@@ -398,6 +446,9 @@ static void ctap_task(void *arg)
             }
         }
         ctaphid_check_timeouts();
+#ifdef CONFIG_TINYCRYPT_WATCH_BLE
+        check_enrol_hold();
+#endif
     }
 }
 
@@ -421,9 +472,22 @@ void app_main(void)
     // No radio is on, so use the ADC noise source for esp_fill_random().
     // Must be disabled again before Wi-Fi/BLE or the ADC are used.
     bootloader_random_enable();
+    // The radio replaces the ADC as the RNG's entropy source. If no radio comes up, put the ADC
+    // source back: credential keys and ECDSA nonces must never come from a bare PRNG.
+    bool radio = false;
 #ifdef CONFIG_TINYCRYPT_NOTIFIER
-    // Disables the ADC source again and brings up the radio, which replaces it.
-    notifier_start();
+    radio |= notifier_start();
+#endif
+#ifdef CONFIG_TINYCRYPT_WATCH_BLE
+    bootloader_random_disable();  // (again, if the notifier is off) before the radio starts
+    radio |= ble_presence_start();
+#endif
+#if defined(CONFIG_TINYCRYPT_NOTIFIER) || defined(CONFIG_TINYCRYPT_WATCH_BLE)
+    if (!radio)
+    {
+        ESP_LOGW(TAG, "no radio started: ADC entropy back on");
+        bootloader_random_enable();
+    }
 #endif
 
     gpio_config_t button = {

@@ -8,6 +8,15 @@ config TINYCRYPT_NOTIFIER
         SNS and APNs to the watch. The BOOT button keeps working whatever happens to the network.
         Needs certs/ and sdkconfig.secrets from infra/scripts/provision-key.sh.
 
+config TINYCRYPT_WATCH_BLE
+    bool "Accept presence from the watch over BLE (signed challenge)"
+    depends on BT_NIMBLE_ENABLED
+    default y
+    help
+        The key advertises a GATT service; during a presence wait the enrolled watch reads a
+        fresh challenge and writes its Secure Enclave signature back. Hold BOOT for 5 s while
+        idle to enrol a watch. The button keeps working regardless.
+
 if TINYCRYPT_NOTIFIER
 
 config TINYCRYPT_WIFI_SSID
