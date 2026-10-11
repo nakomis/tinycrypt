@@ -41,6 +41,7 @@
 #define PRESENCE_REPORT_SIZE 64
 #define PRESENCE_REQUEST_HASH_LEN 32
 #define PRESENCE_RP_MAX 254  // a DNS name (253) and its NUL
+#define PRESENCE_LABEL_MAX 64  // an external wait's text for the watch, with its NUL
 
 // A short wait (U2F's 750 ms poll) followed within this long by another on the same channel is
 // the same user action: it shares one push and one watch challenge.
@@ -89,6 +90,9 @@ bool presence_request_bound(void);
 // During a bound wait: SHA-256 of the request being served, and its rpId ("" for U2F).
 const uint8_t *presence_request_hash(void);
 const char *presence_request_rp(void);
+// During a bound wait: what the watch should ask, for an external wait ("" for a CTAP request,
+// where the push is worded from the rpId).
+const char *presence_request_label(void);
 
 // While sources are being disarmed: true if the requesting channel cancelled (CANCEL or INIT).
 bool presence_was_cancelled(void);
@@ -97,3 +101,19 @@ bool presence_was_cancelled(void);
 // (timed out, or cancelled by the requesting channel).
 int presence_wait(uint32_t timeout_ms, const presence_source *const *sources, size_t n_sources,
                   const presence_io *io);
+
+// Presence for something other than a CTAP request (CRYPT-14: installing an update), bound to
+// `hash` and shown on the watch as `label` (printable ASCII, truncated to PRESENCE_LABEL_MAX - 1).
+// Run it from the CTAPHID task while it's idle, never inside a CTAP request. No channel owns the
+// wait: no KEEPALIVEs, and everything that starts a request (INIT included) gets CHANNEL_BUSY, so
+// only an approval, the timeout or presence_cancel_external() ends it. The hash must be
+// domain-separated from CTAP request hashes (a SHA-256 over a distinct prefix). Returns 1 or 0.
+int presence_wait_external(uint32_t timeout_ms, const uint8_t hash[PRESENCE_REQUEST_HASH_LEN], const char *label,
+                           const presence_source *const *sources, size_t n_sources, const presence_io *io);
+
+// Ends the external wait as cancelled (result 0). Safe from any task. Sticky: a cancel that comes
+// before the wait has started ends it as soon as it starts, so the caller must clear any stale one
+// (presence_clear_external_cancel) when it hands out the wait, before a cancel can be meant for it.
+// Never affects a CTAP wait.
+void presence_cancel_external(void);
+void presence_clear_external_cancel(void);

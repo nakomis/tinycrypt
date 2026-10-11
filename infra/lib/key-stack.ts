@@ -10,7 +10,10 @@ export interface KeyStackProps extends cdk.StackProps {
 
 /**
  * CRYPT-15: each security key is an IoT Thing that may only connect as itself and publish presence
- * requests on its own topic, tinycrypt/{env}/presence/{thing}/request. Its certificate is made and
+ * requests on its own topic, tinycrypt/{env}/presence/{thing}/request.
+ * CRYPT-14: it also takes Fleet's commands on tinycrypt/{thing}/commands and answers on
+ * tinycrypt/{thing}/responses (its own only), and its attributes tell Fleet to use the secure tier:
+ * signed images only, and an install the key's owner approves. Its certificate is made and
  * attached by `infra/scripts/provision-key.sh`, not here: the private key must never pass through
  * CloudFormation (and moves onto the ATECC608 later).
  */
@@ -40,13 +43,35 @@ export class KeyStack extends cdk.Stack {
                         // Its own topic only, so a key can't pose as another.
                         Resource: arn(`topic/tinycrypt/${deployEnv}/presence/\${iot:Connection.Thing.ThingName}/request`),
                     },
+                    {
+                        Effect: 'Allow',
+                        Action: 'iot:Publish',
+                        Resource: arn('topic/tinycrypt/${iot:Connection.Thing.ThingName}/responses'),
+                    },
+                    {
+                        Effect: 'Allow',
+                        Action: 'iot:Subscribe',
+                        Resource: arn('topicfilter/tinycrypt/${iot:Connection.Thing.ThingName}/commands'),
+                    },
+                    {
+                        Effect: 'Allow',
+                        Action: 'iot:Receive',
+                        Resource: arn('topic/tinycrypt/${iot:Connection.Thing.ThingName}/commands'),
+                    },
                 ],
             },
         });
 
         for (const name of keyNames) {
             const thingName = `tinycrypt-${deployEnv}-${name}`;
-            new iot.CfnThing(this, `Thing-${name}`, { thingName });
+            new iot.CfnThing(this, `Thing-${name}`, {
+                thingName,
+                // Read by Fleet (nakomis-fleet): ota-signed makes it refuse unsigned builds for this key,
+                // ota-approval makes it expect awaiting_approval / approved from the key.
+                attributePayload: {
+                    attributes: { project: 'tinycrypt', deviceType: 'fido-key', capabilities: 'ota,ota-signed,ota-approval' },
+                },
+            });
             new cdk.CfnOutput(this, `ThingName-${name}`, { value: thingName });
         }
         new cdk.CfnOutput(this, 'KeyPolicyName', { value: policy.policyName! });

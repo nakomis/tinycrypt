@@ -1,12 +1,12 @@
 menu "tinycrypt"
 
 config TINYCRYPT_NOTIFIER
-    bool "Send presence requests to the watch (Wi-Fi + MQTT to AWS IoT Core)"
-    default n
+    bool "Send presence requests to the watch and take updates from Fleet (Wi-Fi + MQTT to AWS IoT Core)"
+    default y
     help
         When the CTAP core asks for user presence, publish a request that IoT Core routes through
         SNS and APNs to the watch. The BOOT button keeps working whatever happens to the network.
-        Needs certs/ and sdkconfig.secrets from infra/scripts/provision-key.sh.
+        Needs the prov partition from infra/scripts/provision-key.sh (Wi-Fi, IoT certificate).
 
 config TINYCRYPT_LED
     bool "Status LED (one WS2812-class RGB LED)"
@@ -34,27 +34,11 @@ config TINYCRYPT_WATCH_BLE
         fresh challenge and writes its Secure Enclave signature back. Hold BOOT for 5 s while
         idle to enrol a watch. The button keeps working regardless.
 
-if TINYCRYPT_NOTIFIER
-
-config TINYCRYPT_WIFI_SSID
-    string "Wi-Fi SSID"
-
-config TINYCRYPT_WIFI_PASSWORD
-    string "Wi-Fi password"
-
-config TINYCRYPT_IOT_ENDPOINT
-    string "AWS IoT Core data endpoint (xxxx-ats.iot.<region>.amazonaws.com)"
-
-config TINYCRYPT_THING_NAME
-    string "IoT Thing name, also the MQTT client id"
-
-config TINYCRYPT_PRESENCE_TOPIC
-    string "MQTT topic for presence requests: tinycrypt/{env}/presence/{thing}/request"
-
-config TINYCRYPT_APNS_PLATFORM
-    string "SNS message key for the APNs payload (APNS_SANDBOX for development watch builds, APNS for production)"
-    default "APNS_SANDBOX"
-
-endif
+config TINYCRYPT_OTA_FAIL_SELFTEST
+    bool "TEST ONLY: fail the post-update self-test, to check rollback"
+    default n
+    help
+        An image built with this fails its self-test after an update, so the bootloader rolls back
+        to the previous one, which reports "rolled back" to Fleet. Never publish one for real use.
 
 endmenu

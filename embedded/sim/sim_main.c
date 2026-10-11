@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <getopt.h>
+#include <pthread.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -44,6 +45,11 @@ static presence_mode_t presence_mode = PRESENCE_AUTO;
 static bool up_disabled = false;
 static uint32_t watch_after_ms = 0;
 static uint32_t up_timeout_ms = 0;  // 0: the core's own timeout
+// An external wait (CRYPT-14, standing in for an OTA install approval): starts external_at_ms after
+// startup, once the loop is idle, and is cancelled from another thread external_cancel_ms into it.
+static uint32_t external_at_ms = 0;
+static uint32_t external_cancel_ms = 0;
+static bool external_cancel_first = false;  // cancelled before the wait even starts
 static char state_path[1024];
 static char rk_path[1024];
 static char counter_path[1024];
@@ -162,6 +168,8 @@ static void watch_arm(void *ctx)
     watch_armed = presence_request_bound();
     fprintf(stderr, ">>> %s action\n", presence_is_new_action() ? "new" : "same");
     const uint8_t *h = presence_request_hash();
+    if (presence_request_label()[0])
+        fprintf(stderr, ">>> label %s\n", presence_request_label());
     fprintf(stderr, ">>> request %s rp=%s hash=", watch_armed ? "bound" : "unbound", presence_request_rp());
     for (int i = 0; i < PRESENCE_REQUEST_HASH_LEN; i++)
         fprintf(stderr, "%02x", h[i]);
@@ -237,6 +245,51 @@ int ctap_user_presence_test(uint32_t delay_ms)
     }
     }
     return 0;
+}
+
+// The external wait: the button or the watch, as for a CTAP request, under the same presence mode.
+static void *cancel_later(void *arg)
+{
+    (void)arg;
+    usleep(external_cancel_ms * 1000);
+    fprintf(stderr, ">>> cancelling the external wait\n");
+    presence_cancel_external();
+    return NULL;
+}
+
+static void run_external_wait(void)
+{
+    // SHA-256("tinycrypt-sim-external"): any fixed hash will do.
+    static const uint8_t hash[PRESENCE_REQUEST_HASH_LEN] = {
+        0x5e, 0x1d, 0x0a, 0x8c, 0x3b, 0x77, 0x42, 0x19, 0xa6, 0x0f, 0xd2, 0x91, 0x4c, 0xe8, 0x23, 0x6b,
+        0x90, 0x11, 0x7d, 0xc4, 0x58, 0x2e, 0xb3, 0x06, 0xf9, 0x6a, 0x35, 0xd0, 0x87, 0x4f, 0xe1, 0x2c};
+    if (external_cancel_ms)
+    {
+        pthread_t t;
+        pthread_create(&t, NULL, cancel_later, NULL);
+        pthread_detach(t);
+    }
+    if (external_cancel_first)
+    {
+        fprintf(stderr, ">>> cancelling the external wait before it starts\n");
+        presence_cancel_external();
+    }
+    fprintf(stderr, ">>> external wait\n");
+    uint32_t timeout = up_timeout_ms ? up_timeout_ms : 10000;
+    int result;
+    if (presence_mode == PRESENCE_AUTO || presence_mode == PRESENCE_DENY)
+        result = presence_mode == PRESENCE_AUTO;
+    else if (presence_mode == PRESENCE_PROMPT)
+    {
+        const presence_source *sources[] = {&button_source};
+        result = presence_wait_external(timeout, hash, "Install tinycrypt 9.9.9?", sources, 1, &sim_io);
+    }
+    else
+    {
+        const presence_source *sources[] = {&button_source, &watch_source};
+        result = presence_wait_external(timeout, hash, "Install tinycrypt 9.9.9?", sources, 2, &sim_io);
+    }
+    fprintf(stderr, ">>> external result %d\n", result);
 }
 
 // ---- rng, counter, state --------------------------------------------------
@@ -367,7 +420,7 @@ static void usage(const char *argv0)
 {
     fprintf(stderr,
             "usage: %s [--port N] [--state-dir DIR] [--presence auto|deny|prompt|button+watch]\n"
-            "          [--watch-after MS] [--up-timeout MS]\n",
+            "          [--watch-after MS] [--up-timeout MS] [--external-at MS [--external-cancel MS | --external-cancel-first]]\n",
             argv0);
     exit(2);
 }
@@ -383,10 +436,13 @@ int main(int argc, char *argv[])
         {"presence", required_argument, NULL, 'u'},
         {"watch-after", required_argument, NULL, 'w'},
         {"up-timeout", required_argument, NULL, 't'},
+        {"external-at", required_argument, NULL, 'x'},
+        {"external-cancel", required_argument, NULL, 'c'},
+        {"external-cancel-first", no_argument, NULL, 'f'},
         {NULL, 0, NULL, 0},
     };
     int c;
-    while ((c = getopt_long(argc, argv, "p:s:u:w:t:", opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "p:s:u:w:t:x:c:f", opts, NULL)) != -1)
     {
         switch (c)
         {
@@ -413,6 +469,15 @@ int main(int argc, char *argv[])
             break;
         case 't':
             up_timeout_ms = (uint32_t)atoi(optarg);
+            break;
+        case 'x':
+            external_at_ms = (uint32_t)atoi(optarg);
+            break;
+        case 'c':
+            external_cancel_ms = (uint32_t)atoi(optarg);
+            break;
+        case 'f':
+            external_cancel_first = true;
             break;
         default:
             usage(argv[0]);
@@ -447,8 +512,15 @@ int main(int argc, char *argv[])
     fflush(stdout);
 
     uint8_t msg[HID_MESSAGE_SIZE];
+    uint32_t started = millis();
+    bool external_done = external_at_ms == 0;
     for (;;)
     {
+        if (!external_done && millis() - started >= external_at_ms)
+        {
+            external_done = true;
+            run_external_wait();
+        }
         memset(msg, 0, sizeof(msg));
         if (transport_recv(msg, 10) > 0)
         {

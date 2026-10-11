@@ -5,9 +5,15 @@
 //   {"default": "...", "APNS_SANDBOX": "<the APNs payload as a JSON string>"}
 // tc.sentAt (ms since the epoch, from SNTP) lets the watch time the trip and refuse stale requests.
 // The push carries no authority: approval only counts once the watch signs the key's BLE challenge.
+//
+// Fleet (CRYPT-14): the key also subscribes to tinycrypt/<thing>/commands and answers on
+// tinycrypt/<thing>/responses; ota.c handles the commands. Its settings and certificate come from
+// the prov partition (prov.h), not the image.
 #include "notifier.h"
 #include "led_status.h"
+#include "ota.h"
 #include "presence.h"
+#include "prov.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -30,8 +36,6 @@
 static const char *TAG = "notifier";
 
 extern const char root_ca_start[] asm("_binary_AmazonRootCA1_pem_start");
-extern const char device_cert_start[] asm("_binary_device_pem_crt_start");
-extern const char device_key_start[] asm("_binary_device_pem_key_start");
 
 // Wi-Fi reconnect backoff, so a wrong password or a missing AP doesn't spin the radio.
 #define WIFI_RETRY_MIN_MS 1000
@@ -39,6 +43,13 @@ extern const char device_key_start[] asm("_binary_device_pem_key_start");
 // Any time after this (Nov 2023) means SNTP has set the clock; before it, it's counting from 1970.
 #define CLOCK_SET_AFTER_S 1700000000
 
+// Fleet's commands can carry a presigned URL of ~1.5 KB (longer ones arrive in chunks).
+#define MQTT_BUFFER_SIZE 4096
+
+static prov_t prov;
+static char commands_topic[sizeof(prov.thing_name) + 32];
+static char responses_topic[sizeof(prov.thing_name) + 32];
+static int subscribe_msg_id = -1;
 static esp_mqtt_client_handle_t mqtt;
 static volatile bool mqtt_connected;
 
@@ -49,6 +60,7 @@ static bool pending;
 // The request a push is for, copied in the CTAP task when its wait starts (under pending_lock):
 // the MQTT task may send a held push while the next wait is rewriting presence's own copy.
 static char held_rp[PRESENCE_RP_MAX];
+static char held_label[PRESENCE_LABEL_MAX];
 static uint8_t held_hash[PRESENCE_REQUEST_HASH_LEN];
 // Before the first connection the LED says "connecting", and "offline" once it has connected
 // before or CONNECT_DEADLINE_MS has passed without a connection (bad credentials, AP down).
@@ -110,7 +122,9 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     case MQTT_EVENT_CONNECTED:
     {
         mqtt_connected = true;
-        ESP_LOGI(TAG, "MQTT connected to IoT Core as %s", CONFIG_TINYCRYPT_THING_NAME);
+        ESP_LOGI(TAG, "MQTT connected to IoT Core as %s", prov.thing_name);
+        // A clean session each time, so subscribe on every connect.
+        subscribe_msg_id = esp_mqtt_client_subscribe(mqtt, commands_topic, 1);
         led_status_set(LED_CONNECTING, false);
         led_status_set(LED_OFFLINE, false);
         if (!ever_connected)
@@ -133,8 +147,31 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
             led_status_set(LED_OFFLINE, true);
         ESP_LOGW(TAG, "MQTT disconnected");
         break;
+    case MQTT_EVENT_SUBSCRIBED:
+        // A SUBACK can refuse (0x80): then the key can't take updates, and a new image isn't kept.
+        if (event->msg_id == subscribe_msg_id && event->error_handle->error_type == MQTT_ERROR_TYPE_SUBSCRIBE_FAILED)
+            ESP_LOGE(TAG, "subscription to %s refused", commands_topic);
+        else if (event->msg_id == subscribe_msg_id)
+        {
+            ESP_LOGI(TAG, "listening for Fleet on %s", commands_topic);
+            ota_on_connected();
+        }
+        break;
+    case MQTT_EVENT_DATA:
+        // Commands only (the one subscription). One that didn't fit the buffer arrives in pieces:
+        // refuse it rather than parse a fragment.
+        if (event->current_data_offset != 0)
+            break;
+        if (event->total_data_len != event->data_len)
+        {
+            ESP_LOGW(TAG, "command of %d bytes doesn't fit the %d-byte buffer", event->total_data_len, MQTT_BUFFER_SIZE);
+            notifier_respond("{\"type\":\"error\",\"message\":\"Command too long\"}");
+            break;
+        }
+        ota_handle_command(event->data, (size_t)event->data_len);
+        break;
     case MQTT_EVENT_PUBLISHED:
-        ESP_LOGI(TAG, "presence request (msg %d) acknowledged by IoT Core", event->msg_id);
+        ESP_LOGI(TAG, "msg %d acknowledged by IoT Core", event->msg_id);
         break;
     case MQTT_EVENT_ERROR:
         if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT)
@@ -165,6 +202,14 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 bool notifier_start(void)
 {
     bool radio_on = false;
+    if (!prov_load(&prov))
+    {
+        ESP_LOGE(TAG, "notifier off: the key isn't provisioned (the button works)");
+        return false;
+    }
+    snprintf(commands_topic, sizeof(commands_topic), "tinycrypt/%s/commands", prov.thing_name);
+    snprintf(responses_topic, sizeof(responses_topic), "tinycrypt/%s/responses", prov.thing_name);
+
     // The radio becomes the RNG's entropy source; the ADC one must be off before Wi-Fi starts.
     bootloader_random_disable();
 
@@ -186,8 +231,8 @@ bool notifier_start(void)
     TRY(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event, NULL));
 
     wifi_config_t sta = {0};
-    strlcpy((char *)sta.sta.ssid, CONFIG_TINYCRYPT_WIFI_SSID, sizeof(sta.sta.ssid));
-    strlcpy((char *)sta.sta.password, CONFIG_TINYCRYPT_WIFI_PASSWORD, sizeof(sta.sta.password));
+    strlcpy((char *)sta.sta.ssid, prov.wifi_ssid, sizeof(sta.sta.ssid));
+    strlcpy((char *)sta.sta.password, prov.wifi_password, sizeof(sta.sta.password));
     sta.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     TRY(esp_wifi_set_mode(WIFI_MODE_STA));
     TRY(esp_wifi_set_config(WIFI_IF_STA, &sta));
@@ -205,17 +250,20 @@ bool notifier_start(void)
     esp_sntp_config_t sntp = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
     TRY(esp_netif_sntp_init(&sntp));
 
+    static char uri[sizeof(prov.iot_endpoint) + 16];
+    snprintf(uri, sizeof(uri), "mqtts://%s:8883", prov.iot_endpoint);
     const esp_mqtt_client_config_t config = {
         .broker = {
-            .address.uri = "mqtts://" CONFIG_TINYCRYPT_IOT_ENDPOINT ":8883",
+            .address.uri = uri,
             .verification.certificate = root_ca_start,
         },
         .credentials = {
-            .client_id = CONFIG_TINYCRYPT_THING_NAME,
-            .authentication = {.certificate = device_cert_start, .key = device_key_start},
+            .client_id = prov.thing_name,
+            .authentication = {.certificate = prov.device_cert, .key = prov.device_key},
         },
         .session.keepalive = 60,
         .network.reconnect_timeout_ms = 5000,
+        .buffer.size = MQTT_BUFFER_SIZE,
     };
     mqtt = esp_mqtt_client_init(&config);
     if (mqtt == NULL)
@@ -226,8 +274,8 @@ bool notifier_start(void)
     TRY(esp_mqtt_client_register_event(mqtt, ESP_EVENT_ANY_ID, mqtt_event, NULL));
     TRY(esp_mqtt_client_start(mqtt));
     started = true;
-    ESP_LOGI(TAG, "notifier starting: Wi-Fi \"%s\", IoT Core %s, topic %s", CONFIG_TINYCRYPT_WIFI_SSID,
-             CONFIG_TINYCRYPT_IOT_ENDPOINT, CONFIG_TINYCRYPT_PRESENCE_TOPIC);
+    ESP_LOGI(TAG, "notifier starting: Wi-Fi \"%s\", IoT Core %s, topic %s", prov.wifi_ssid, prov.iot_endpoint,
+             prov.presence_topic);
     return radio_on;
 }
 
@@ -263,16 +311,21 @@ static void send_request(void)
     // same hash, and shows the site so you know what you're approving. presence only binds a site
     // that is a plain host name, so it can go into the alert as it is.
     char rp[PRESENCE_RP_MAX];
+    char label[PRESENCE_LABEL_MAX];
     uint8_t hash[PRESENCE_REQUEST_HASH_LEN];
     taskENTER_CRITICAL(&pending_lock);
     memcpy(rp, held_rp, sizeof(rp));
+    memcpy(label, held_label, sizeof(label));
     memcpy(hash, held_hash, sizeof(hash));
     taskEXIT_CRITICAL(&pending_lock);
     char req[2 * PRESENCE_REQUEST_HASH_LEN + 1];
     for (int i = 0; i < PRESENCE_REQUEST_HASH_LEN; i++)
         snprintf(&req[2 * i], 3, "%02x", hash[i]);
+    // An update (CRYPT-14) brings its own wording: "Install tinycrypt x.y.z?".
     char body[PRESENCE_RP_MAX + 32];
-    if (rp[0])
+    if (label[0])
+        snprintf(body, sizeof(body), "%s", label);
+    else if (rp[0])
         snprintf(body, sizeof(body), "Sign in to %s?", rp);
     else
         snprintf(body, sizeof(body), "Your security key wants approval");
@@ -280,13 +333,13 @@ static void send_request(void)
     cJSON *apns = cJSON_CreateObject();
     cJSON *aps = cJSON_AddObjectToObject(apns, "aps");
     cJSON *alert = cJSON_AddObjectToObject(aps, "alert");
-    cJSON_AddStringToObject(alert, "title", "Sign in?");
+    cJSON_AddStringToObject(alert, "title", label[0] ? "Update?" : "Sign in?");
     cJSON_AddStringToObject(alert, "body", body);
     cJSON_AddStringToObject(aps, "category", "PRESENCE");
     cJSON_AddStringToObject(aps, "sound", "default");
     cJSON *tc = cJSON_AddObjectToObject(apns, "tc");
     cJSON_AddStringToObject(tc, "id", id);
-    cJSON_AddStringToObject(tc, "key", CONFIG_TINYCRYPT_THING_NAME);
+    cJSON_AddStringToObject(tc, "key", prov.thing_name);
     cJSON_AddStringToObject(tc, "req", req);
     if (rp[0])
         cJSON_AddStringToObject(tc, "rp", rp);
@@ -297,7 +350,7 @@ static void send_request(void)
     cJSON *message = cJSON_CreateObject();
     cJSON_AddStringToObject(message, "default", "tinycrypt presence request");
     if (apns_text)
-        cJSON_AddStringToObject(message, CONFIG_TINYCRYPT_APNS_PLATFORM, apns_text);
+        cJSON_AddStringToObject(message, prov.apns_platform, apns_text);
     char *text = apns_text ? cJSON_PrintUnformatted(message) : NULL;
 
     if (text == NULL)
@@ -307,7 +360,7 @@ static void send_request(void)
         // Enqueued for the MQTT task to send, so the CTAP task doesn't wait on the network. QoS 1
         // for the PUBACK in the log; the outbox drops anything unsent after 10 s
         // (CONFIG_MQTT_OUTBOX_EXPIRED_TIMEOUT_MS), so a reconnect can't deliver a stale prompt.
-        int msg_id = esp_mqtt_client_enqueue(mqtt, CONFIG_TINYCRYPT_PRESENCE_TOPIC, text, 0, 1, 0, true);
+        int msg_id = esp_mqtt_client_enqueue(mqtt, prov.presence_topic, text, 0, 1, 0, true);
         ESP_LOGI(TAG, "presence request %s queued (msg %d, sentAt %" PRId64 ")", id, msg_id, sent_at);
     }
 
@@ -327,6 +380,7 @@ void notifier_presence_wait_started(void)
     {
         taskENTER_CRITICAL(&pending_lock);
         memcpy(held_rp, presence_request_rp(), sizeof(held_rp));
+        memcpy(held_label, presence_request_label(), sizeof(held_label));
         memcpy(held_hash, presence_request_hash(), sizeof(held_hash));
         taskEXIT_CRITICAL(&pending_lock);
         send_request();
@@ -339,4 +393,21 @@ void notifier_presence_wait_ended(void)
     taskENTER_CRITICAL(&pending_lock);
     pending = false;
     taskEXIT_CRITICAL(&pending_lock);
+}
+
+bool notifier_respond(const char *json)
+{
+    if (!started || !mqtt_connected)
+    {
+        ESP_LOGW(TAG, "not connected: response dropped: %s", json);
+        return false;
+    }
+    int msg_id = esp_mqtt_client_enqueue(mqtt, responses_topic, json, 0, 1, 0, true);
+    ESP_LOGI(TAG, "response queued (msg %d): %s", msg_id, json);
+    return msg_id >= 0;
+}
+
+const char *notifier_thing_name(void)
+{
+    return prov.thing_name;
 }

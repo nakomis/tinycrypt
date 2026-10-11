@@ -1,20 +1,15 @@
 include(${COMPONENT_DIR}/../../cmake/solo_sources.cmake)
 
-set(srcs main.c led_status.c ${TINYCRYPT_PORT_SOURCES})
+set(srcs main.c led_status.c ota.c ${TINYCRYPT_PORT_SOURCES})
 set(embed "")
 if(CONFIG_TINYCRYPT_WATCH_BLE)
   list(APPEND srcs ble_presence.c)
 endif()
-# The notifier (CRYPT-15) needs the key's certificate from infra/scripts/provision-key.sh.
+# Amazon Root CA 1 (public) for IoT Core and the OTA download. The key's own certificate, key and
+# settings are not in the image: they're in the prov partition (prov.h, provision-key.sh).
+list(APPEND embed ${COMPONENT_DIR}/../AmazonRootCA1.pem)
 if(CONFIG_TINYCRYPT_NOTIFIER)
-  list(APPEND srcs notifier.c)
-  set(certs ${COMPONENT_DIR}/../certs)
-  foreach(f AmazonRootCA1.pem ${CONFIG_TINYCRYPT_THING_NAME}/device.pem.crt ${CONFIG_TINYCRYPT_THING_NAME}/device.pem.key)
-    if(NOT EXISTS ${certs}/${f})
-      message(FATAL_ERROR "certs/${f} is missing: run infra/scripts/provision-key.sh")
-    endif()
-    list(APPEND embed ${certs}/${f})
-  endforeach()
+  list(APPEND srcs notifier.c prov.c)
 endif()
 # The Secure Enclave vector self-test (CRYPT-10) is test firmware only.
 if(TINYCRYPT_INSECURE_SOFT_KEY)
@@ -25,7 +20,7 @@ endif()
 idf_component_register(
   SRCS ${srcs}
   PRIV_REQUIRES solo_core nvs_flash esp_driver_gpio esp_timer bootloader_support espcoredump mbedtls
-                esp_wifi esp_netif esp_event mqtt json bt
+                esp_wifi esp_netif esp_event mqtt json bt app_update esp_http_client esp_app_format
   EMBED_TXTFILES ${embed}
   WHOLE_ARCHIVE
 )

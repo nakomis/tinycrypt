@@ -20,8 +20,8 @@ jobs:
           git submodule update --init third_party/solo1
           git -C third_party/solo1 submodule update --init crypto/cifra crypto/micro-ecc crypto/tiny-AES-c tinycbor
 
-      - name: Install libsodium
-        run: brew install libsodium
+      - name: Install libsodium and cJSON
+        run: brew install libsodium cjson
 
       - uses: actions/setup-python@v5
         with:

@@ -11,9 +11,7 @@ if(TINYCRYPT_RELEASE AND TINYCRYPT_INSECURE_SOFT_KEY)
 endif()
 
 set(IDF_TARGET esp32s3)
-# Per-key settings and the Wi-Fi password, written by infra/scripts/provision-key.sh (not committed).
-if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/sdkconfig.secrets)
-  set(SDKCONFIG_DEFAULTS "sdkconfig.defaults;sdkconfig.secrets")
-endif()
+# Every key runs the same image: per-key settings, the Wi-Fi password and the IoT certificate are in
+# the prov partition (infra/scripts/provision-key.sh), never in the build (CRYPT-14).
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(tinycrypt)

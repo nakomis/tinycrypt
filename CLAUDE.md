@@ -115,7 +115,7 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   `{"default": "...", "APNS_SANDBOX": "<APNs payload as a JSON string>"}` (`APNS` in prod), with
   category `PRESENCE`. Measured on a real watch: publish → on the watch 1.3–2.4 s; SNS holds a
   message for 25–44 ms (`dwellTimeMs` in its delivery logs).
-- **Notifier firmware** (CRYPT-15, `esp32s3/main/notifier.c`, off unless `CONFIG_TINYCRYPT_NOTIFIER`):
+- **Notifier firmware** (CRYPT-15, `esp32s3/main/notifier.c`, `CONFIG_TINYCRYPT_NOTIFIER`, on by default):
   Wi-Fi (no power saving), SNTP, and esp-mqtt held open to IoT Core with the key's own X.509
   certificate. A presence request is sent once per user action, not per `ctap_user_presence_test` call
   (solo1's U2F path re-asks every 750 ms while the browser retries; without this, one sign-in sent dozens
@@ -123,11 +123,54 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   after 10 s unsent, so a reconnect can't deliver a stale prompt. Setup failures switch the notifier off
   rather than aborting; the BOOT button works regardless. `infra/scripts/provision-key.sh [key-N] [--new]`
   makes (or with `--new` replaces, retiring the old one) the certificate and writes
-  `esp32s3/certs/<thing>/` and `esp32s3/sdkconfig.secrets` (Wi-Fi from SSM
-  `/Nakomis/Wifi/*`), both uncommitted; then `rm esp32s3/sdkconfig` and rebuild. Each key is an IoT
-  Thing (`TinycryptKeyStack`) whose policy allows connecting only as itself and publishing only presence
-  requests. INSECURE, TEST ONLY: that private key sits in flash; the ATECC608 replaces it. Measured on the
-  board: key publish → on the watch 1.3–1.5 s. The app partition is 1.75 MB for the network stack.
+  `esp32s3/certs/<thing>/` (uncommitted), including `prov.bin`: the key's **`prov` NVS partition**
+  (CRYPT-14) with its Wi-Fi (from SSM `/Nakomis/Wifi/*`), endpoint, Thing name, topic, APNs platform,
+  certificate and key (`main/prov.c`). `flash-manual.sh <port> [thing]` writes it with the app. None of
+  it is in the image, so every key runs the same one; nothing per-key goes in Kconfig any more. Each key
+  is an IoT Thing (`TinycryptKeyStack`) whose policy allows connecting only as itself, publishing presence
+  requests and Fleet responses, and receiving Fleet commands, all on its own topics. INSECURE, TEST ONLY:
+  that private key sits in flash; the ATECC608 replaces it. Measured on the board: key publish → on the
+  watch 1.3–1.5 s.
+- **OTA through Fleet** (CRYPT-14, `esp32s3/main/ota.c`, `port/ota_cmd.c`): Fleet
+  (`app.sandbox.nakomis.com/fleet`, repo `nakomis-fleet`) only triggers; **the key is the trust anchor**.
+  Commands on `tinycrypt/<thing>/commands` (`get_version`, `ping`, `ota_update {url, version, sha256}`,
+  `url_chunk` 0-based ≤ 10 with `sha256` on one, `ota_cancel`; anything else, e.g. `reboot`/`wipe`, is
+  refused), answers on `/responses` (a `version` message on every connect, `ota_progress`, `ota_error`,
+  `ota_complete`). The key downloads over HTTPS (Amazon Root CA 1, committed as `esp32s3/AmazonRootCA1.pem`)
+  into the spare slot, hashing as it goes, then refuses it unless: SHA-256 = Fleet's; `esp_ota_end` passes
+  (signature by the key that signed the **running** image); `esp_app_desc` says `tinycrypt` at that
+  version; not a downgrade. Only then a 60 s presence wait, run by the CTAP task while idle
+  (`presence_wait_external`: no owning channel, CTAP gets BUSY meanwhile), bound to
+  SHA-256(`"tinycrypt-ota-v1"` ‖ image SHA-256 ‖ version) with the push "Install tinycrypt x.y.z?"; the
+  watch needs no change. Approved → NVS `ota/target`, switch slot, restart. **Probation:** a new image
+  must pass `local_selftest` (NVS, micro-ecc sign/verify) and reach IoT Core within 120 s or it's rolled
+  back (bootloader rollback; a crash rolls back too); the old image then reports `rolled back`.
+  `CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST` builds a deliberately failing image to test that
+  (`publish-ota.sh x.y.z --test-rollback`).
+  **RAM is the constraint** (the MINI-1-N8 has no PSRAM): with Wi-Fi, NimBLE and the MQTT TLS session up,
+  the largest free block after the S3 handshake was 13 KB, and mbedTLS needs ~16.7 KB for one S3 record.
+  So **BLE (host and controller) is paused for the download** (`ble_presence_suspend`, not during a
+  presence wait) and resumed before the approval: 109 KB free, largest block 31.7 KB. mbedTLS dynamic
+  buffers are on. esp_http_client's TX buffer is sized to the presigned URL (~3 KB with an STS token).
+  IoT Core redelivers commands whose PUBACK was slow during a download: a repeated URL is ignored (every
+  Fleet trigger presigns a new one). An `ota_cancel` sticks until the approval wait it's for ends, and
+  wins over a racing approval. **NVS is never erased** to get past an init error (counter, resident keys,
+  watch): a new image that can't read it rolls back. Failures report their cause (TLS error, errno,
+  heap) in `ota_error`, since the log is out of reach on the native port: for a serial log, swap to the
+  UART port (the OTA path doesn't need USB HID).
+- **Flash layout** (`partitions.csv`, fits 4 MB; the boards have 16 MB): `nvs` and `phy` at IDF's
+  single-app offsets (so NVS survived the move), `otadata`, `prov`, two 1.875 MB app slots, coredump.
+  Moving from the old single-app layout needs one wired flash (bootloader with rollback included).
+- **Signed images** (`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT`, RSA-3072, the secure boot v2 scheme):
+  every app image is signed, dev builds included, because an update must be signed like the running
+  one. `build.sh` builds then `sign.sh` signs (never `idf.py flash`: unsigned). The key is in SSM
+  `/tinycrypt/{env}/ota/signing-key` (master) and the Keychain (`tinycrypt-ota-signing`/`{env}`, base64);
+  made once by `infra/scripts/ota-signing-key.sh` (sandbox public key digest `2d1d16f2…`). Replacing it
+  strands every key in the field. Without secure boot this protects updates, not a USB cable.
+- **Publishing**: bump `esp32s3/version.txt`, commit, `esp32s3/publish-ota.sh x.y.z` (clean tree, new
+  version only, no per-key strings in the image) uploads `nakomis-firmware-{env}/tinycrypt/x.y.z/firmware.bin`
+  with `signed=true` and its sha256; then update from Fleet's UI. The Thing's attributes
+  (`capabilities=ota,ota-signed,ota-approval`) make Fleet refuse unsigned builds and expect approval.
 - **Push content is device-supplied**: the key writes the alert text, which goes to APNs verbatim.
   Fine while keys are ours; the push carries no authority anyway (approval needs the signed BLE challenge).
 - **Stale prompts**: an IoT SNS action can't set message attributes, so there's no

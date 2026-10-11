@@ -21,6 +21,7 @@
 #include "driver/gpio.h"
 #include "esp_core_dump.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -41,8 +42,10 @@
 #include "se_selftest.h"
 #endif
 #include "led_status.h"
+#include "ota.h"
 #include "presence.h"
 #include "sdkconfig.h"
+#include "uECC.h"
 #ifdef CONFIG_TINYCRYPT_NOTIFIER
 #include "notifier.h"
 #endif
@@ -284,6 +287,19 @@ static int presence_recv(uint8_t report[PRESENCE_REPORT_SIZE], uint32_t timeout_
 
 static const presence_io usb_io = {presence_recv, usbhid_send, millis};
 
+// The button first, so a press is never missed behind slower sources.
+static const presence_source *const presence_sources[] = {
+    &button_source,
+    &led_source,
+#ifdef CONFIG_TINYCRYPT_WATCH_BLE
+    &ble_presence_source,
+#endif
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+    &notifier_source,
+#endif
+};
+#define N_PRESENCE_SOURCES (sizeof(presence_sources) / sizeof(presence_sources[0]))
+
 // Contract with solo1: 1 = present, 0 = not present, 2 = check disabled by
 // the request. NEVER return anything else. solo1's U2F code tests only `== 0`
 // / `!ret`, so a -1 for "cancelled" would count as present and sign without
@@ -292,18 +308,19 @@ int ctap_user_presence_test(uint32_t delay_ms)
 {
     if (up_disabled)
         return 2;
-    // The button first, so a press is never missed behind slower sources.
-    const presence_source *sources[] = {
-        &button_source,
-        &led_source,
-#ifdef CONFIG_TINYCRYPT_WATCH_BLE
-        &ble_presence_source,
-#endif
-#ifdef CONFIG_TINYCRYPT_NOTIFIER
-        &notifier_source,
-#endif
-    };
-    return presence_wait(delay_ms, sources, sizeof(sources) / sizeof(sources[0]), &usb_io);
+    return presence_wait(delay_ms, presence_sources, N_PRESENCE_SOURCES, &usb_io);
+}
+
+// An update waiting for approval (CRYPT-14): the same sources as a sign-in, bound to the image.
+// Runs here, between CTAP requests, because the wait owns CTAPHID; meanwhile requests get BUSY.
+static void run_ota_approval(void)
+{
+    uint8_t hash[PRESENCE_REQUEST_HASH_LEN];
+    char label[OTA_LABEL_MAX];
+    if (!ota_take_approval(hash, label))
+        return;
+    ESP_LOGI(TAG, "%s (press BOOT or approve on the watch)", label);
+    ota_approval_done(presence_wait_external(OTA_APPROVAL_MS, hash, label, presence_sources, N_PRESENCE_SOURCES, &usb_io));
 }
 
 // ---- rng, counter, state (INSECURE: plain NVS) ------------------------------
@@ -417,6 +434,57 @@ static void report_last_crash(void)
     printf("%s\n", summary.exc_bt_info.corrupted ? " (corrupted)" : "");
 }
 
+// What a new image must pass before it's kept (CRYPT-14, ota.h): the key's NVS state reads back
+// (sign counter, authenticator state; resident keys were loaded in app_main) and ECDSA P-256 works
+// as the CTAP core uses it (micro-ecc). A failure rolls the update back. The rest (USB comes up;
+// IoT Core is reachable, so the image can itself be updated) is checked as boot carries on.
+static int selftest_rng(uint8_t *dst, unsigned size)
+{
+    esp_fill_random(dst, size);
+    return 1;
+}
+
+static bool local_selftest(void)
+{
+#ifdef CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST
+    ESP_LOGE(TAG, "self-test: failing on purpose (CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST)");
+    return false;
+#endif
+    uint32_t counter;
+    esp_err_t err = nvs_get_u32(nvs, "counter", &counter);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
+    {
+        ESP_LOGE(TAG, "self-test: sign counter unreadable (%s)", esp_err_to_name(err));
+        return false;
+    }
+    size_t len = 0;
+    err = nvs_get_blob(nvs, "state", NULL, &len);
+    if ((err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) || (err == ESP_OK && len != sizeof(AuthenticatorState)))
+    {
+        ESP_LOGE(TAG, "self-test: authenticator state unreadable (%s, %u bytes)", esp_err_to_name(err), (unsigned)len);
+        return false;
+    }
+    const struct uECC_Curve_t *curve = uECC_secp256r1();
+    uECC_set_rng(selftest_rng);  // ctap_init sets the core's own later
+    uint8_t priv[32], pub[64], digest[32], sig[64];
+    esp_fill_random(digest, sizeof(digest));
+    if (!uECC_make_key(pub, priv, curve) || !uECC_sign(priv, digest, sizeof(digest), sig, curve) ||
+        !uECC_verify(pub, digest, sizeof(digest), sig, curve))
+    {
+        ESP_LOGE(TAG, "self-test: ECDSA P-256 sign/verify failed");
+        return false;
+    }
+    digest[0] ^= 1;
+    bool forged = uECC_verify(pub, digest, sizeof(digest), sig, curve);
+    memset(priv, 0, sizeof(priv));
+    if (forged)
+    {
+        ESP_LOGE(TAG, "self-test: ECDSA verify accepted a wrong digest");
+        return false;
+    }
+    return true;
+}
+
 #ifdef CONFIG_TINYCRYPT_WATCH_BLE
 // Holding BOOT for 5 s while idle opens the watch enrol window. (Held at power-up, BOOT means
 // download mode instead; during a presence wait, a press is presence.)
@@ -473,6 +541,7 @@ static void ctap_task(void *arg)
             }
         }
         ctaphid_check_timeouts();
+        run_ota_approval();
 #ifdef CONFIG_TINYCRYPT_WATCH_BLE
         check_enrol_hold();
 #endif
@@ -485,13 +554,19 @@ void app_main(void)
     snprintf(serial_string, sizeof(serial_string), "0001-rr%d", (int)esp_reset_reason());
     report_last_crash();
 
+    // Never erase NVS to get past an error: it holds the sign counter, resident keys and the enrolled
+    // watch. A new image from an update that can't read it rolls back (CRYPT-14); otherwise stop
+    // here, and erase by hand (idf.py erase-flash) only if that's really meant.
     esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    if (err != ESP_OK)
     {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
+        ESP_LOGE(TAG, "NVS unusable (%s): not erasing it", esp_err_to_name(err));
+        esp_ota_img_states_t state;
+        if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &state) == ESP_OK &&
+            state == ESP_OTA_IMG_PENDING_VERIFY)
+            esp_ota_mark_app_invalid_rollback_and_reboot();
+        abort();
     }
-    ESP_ERROR_CHECK(err);
     ESP_ERROR_CHECK(nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs));
     if (!nvs_read("rk", rk_store, sizeof(rk_store)))
         ctap_reset_rk();
@@ -504,6 +579,9 @@ void app_main(void)
     // No radio is on, so use the ADC noise source for esp_fill_random().
     // Must be disabled again before Wi-Fi/BLE or the ADC are used.
     bootloader_random_enable();
+
+    // A new image from an update proves itself before it's kept (rolled back otherwise).
+    ota_boot(local_selftest());
     // The radio replaces the ADC as the RNG's entropy source. If no radio comes up, put the ADC
     // source back: credential keys and ECDSA nonces must never come from a bare PRNG.
     bool radio = false;

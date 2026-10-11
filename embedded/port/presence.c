@@ -28,10 +28,14 @@ static bool serving_u2f;
 static bool request_bound;
 static uint8_t request_hash[PRESENCE_REQUEST_HASH_LEN];
 static char request_rp[PRESENCE_RP_MAX];
+static char request_label[PRESENCE_LABEL_MAX];
 static uint8_t last_hash[PRESENCE_REQUEST_HASH_LEN];
 
-// The wait in progress, and the last one (for grouping U2F re-asks into one action).
+// The wait in progress, and the last one (for grouping U2F re-asks into one action). An external
+// wait has no requesting channel (its CID is all zeros, which no channel is ever given).
 static uint8_t request_cid[CID_LEN];
+static bool external;
+static volatile bool cancel_external;
 static bool new_action;
 static bool cancelled;
 static bool last_approved = true;  // so the first wait is always a new action
@@ -68,6 +72,21 @@ const uint8_t *presence_request_hash(void)
 const char *presence_request_rp(void)
 {
     return request_rp;
+}
+
+const char *presence_request_label(void)
+{
+    return request_label;
+}
+
+void presence_cancel_external(void)
+{
+    cancel_external = true;
+}
+
+void presence_clear_external_cancel(void)
+{
+    cancel_external = false;
 }
 
 static bool is_init_packet(const uint8_t *report)
@@ -244,7 +263,7 @@ static bool handle_report(const presence_io *io, const uint8_t *report)
 {
     if (!is_init_packet(report))
         return true;  // a stray continuation: nothing to answer
-    bool same_channel = memcmp(report, request_cid, CID_LEN) == 0;
+    bool same_channel = !external && memcmp(report, request_cid, CID_LEN) == 0;
     uint8_t cmd = report[CMD_OFFSET];
     if (same_channel && cmd == CTAPHID_CANCEL)
         return false;
@@ -261,12 +280,10 @@ static bool handle_report(const presence_io *io, const uint8_t *report)
     return true;
 }
 
-int presence_wait(uint32_t timeout_ms, const presence_source *const *sources, size_t n_sources,
-                  const presence_io *io)
+static int wait(uint32_t timeout_ms, const presence_source *const *sources, size_t n_sources,
+                const presence_io *io)
 {
     uint32_t start = io->now_ms();
-    memcpy(request_cid, current_cid, CID_LEN);
-    bind_request();
     new_action = last_approved || last_cancelled || memcmp(request_cid, last_cid, CID_LEN) != 0 ||
                  memcmp(request_hash, last_hash, sizeof(request_hash)) != 0 ||
                  start - last_end_ms >= PRESENCE_SAME_ACTION_GAP_MS ||
@@ -281,7 +298,12 @@ int presence_wait(uint32_t timeout_ms, const presence_source *const *sources, si
     uint8_t report[PRESENCE_REPORT_SIZE];
     while (io->now_ms() - start < timeout_ms)
     {
-        if ((int32_t)(io->now_ms() - next_keepalive) >= 0)
+        if (external && cancel_external)
+        {
+            cancelled = true;
+            break;
+        }
+        if (!external && (int32_t)(io->now_ms() - next_keepalive) >= 0)
         {
             send_frame(io, request_cid, CTAPHID_KEEPALIVE, CTAPHID_STATUS_UPNEEDED);
             next_keepalive += KEEPALIVE_MS;
@@ -310,5 +332,35 @@ int presence_wait(uint32_t timeout_ms, const presence_source *const *sources, si
     for (size_t i = 0; i < n_sources; i++)
         if (sources[i]->disarm)
             sources[i]->disarm(sources[i]->ctx, result);
+    return result;
+}
+
+int presence_wait(uint32_t timeout_ms, const presence_source *const *sources, size_t n_sources,
+                  const presence_io *io)
+{
+    external = false;
+    memcpy(request_cid, current_cid, CID_LEN);
+    request_label[0] = 0;
+    bind_request();
+    return wait(timeout_ms, sources, n_sources, io);
+}
+
+int presence_wait_external(uint32_t timeout_ms, const uint8_t hash[PRESENCE_REQUEST_HASH_LEN], const char *label,
+                           const presence_source *const *sources, size_t n_sources, const presence_io *io)
+{
+    external = true;
+    memset(request_cid, 0, CID_LEN);
+    memcpy(request_hash, hash, PRESENCE_REQUEST_HASH_LEN);
+    request_rp[0] = 0;
+    // Printable ASCII only: it goes into the push as it is.
+    size_t n = 0;
+    for (; label[n] && n < PRESENCE_LABEL_MAX - 1; n++)
+        request_label[n] = label[n] >= 0x20 && label[n] < 0x7f ? label[n] : '?';
+    request_label[n] = 0;
+    request_bound = true;
+    int result = wait(timeout_ms, sources, n_sources, io);
+    cancel_external = false;
+    external = false;
+    request_bound = false;
     return result;
 }

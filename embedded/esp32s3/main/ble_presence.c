@@ -58,6 +58,7 @@ static ble_addr_t watch_peer;
 static bool have_peer;
 
 static uint8_t own_addr_type;
+static bool running;  // NimBLE and the controller are up (ble_presence_suspend)
 
 static void advertise(void);
 
@@ -525,24 +526,9 @@ static void host_task(void *param)
     nimble_port_freertos_deinit();
 }
 
-bool ble_presence_start(void)
+// Brings up the controller and the host, registers the service and starts the host task.
+static bool bring_up(void)
 {
-    nvs_handle_t nvs;
-    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK)
-    {
-        size_t len = sizeof(watch_pub);
-        have_watch = nvs_get_blob(nvs, NVS_WATCH_KEY, watch_pub, &len) == ESP_OK && len == sizeof(watch_pub);
-        len = sizeof(watch_peer);
-        have_peer = nvs_get_blob(nvs, NVS_PEER_KEY, &watch_peer, &len) == ESP_OK && len == sizeof(watch_peer);
-        nvs_close(nvs);
-    }
-
-    ble_uuid_from_str(&svc_uuid, "30ccc4f1-350d-4fdf-89c5-6120e2cc5044");
-    ble_uuid_from_str(&challenge_uuid, "1c88eb1a-4d1e-4e79-afc7-637c28e91503");
-    ble_uuid_from_str(&response_uuid, "78dc86b2-6f57-478e-979c-22ed6e135a98");
-    ble_uuid_from_str(&enrol_uuid, "a40698d1-315e-496d-8855-05283e3369a0");
-    ble_uuid_from_str(&telemetry_uuid, "c88c0afb-1519-4b4f-9ca1-e5f9eeffd259");
-
     if (nimble_port_init() != ESP_OK)
     {
         ESP_LOGE(TAG, "nimble_port_init failed: watch presence off (the button still works)");
@@ -568,6 +554,69 @@ bool ble_presence_start(void)
     ble_svc_gap_device_name_set("tinycrypt");
     ble_store_config_init();
     nimble_port_freertos_init(host_task);
+    running = true;
+    return true;
+}
+
+int ble_presence_suspend(void)
+{
+    if (!running)
+        return 0;
+    taskENTER_CRITICAL(&lock);
+    bool busy = waiting;
+    taskEXIT_CRITICAL(&lock);
+    if (busy)
+        return -1;  // a presence wait may still be approved over BLE
+    // The connection-limit timers first, so none fires into a host that's going away.
+    for (int i = 0; i < SLOTS; i++)
+        if (slot_timer[i] != NULL)
+            esp_timer_stop(slot_timer[i]);
+    int rc = nimble_port_stop();  // ends nimble_port_run(), so the host task deletes itself
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "nimble_port_stop failed (%d): BLE left running", rc);
+        return 0;
+    }
+    nimble_port_deinit();  // the host and the controller
+    running = false;
+    for (int i = 0; i < SLOTS; i++)
+    {
+        allowed_conn[i] = NO_CONN;
+        slot_conn[i] = NO_CONN;
+    }
+    led_status_set(LED_WATCH_SIGNING, false);
+    ESP_LOGI(TAG, "BLE paused");
+    return 1;
+}
+
+void ble_presence_resume(void)
+{
+    if (running)
+        return;
+    if (bring_up())
+        ESP_LOGI(TAG, "BLE resumed");
+}
+
+bool ble_presence_start(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK)
+    {
+        size_t len = sizeof(watch_pub);
+        have_watch = nvs_get_blob(nvs, NVS_WATCH_KEY, watch_pub, &len) == ESP_OK && len == sizeof(watch_pub);
+        len = sizeof(watch_peer);
+        have_peer = nvs_get_blob(nvs, NVS_PEER_KEY, &watch_peer, &len) == ESP_OK && len == sizeof(watch_peer);
+        nvs_close(nvs);
+    }
+
+    ble_uuid_from_str(&svc_uuid, "30ccc4f1-350d-4fdf-89c5-6120e2cc5044");
+    ble_uuid_from_str(&challenge_uuid, "1c88eb1a-4d1e-4e79-afc7-637c28e91503");
+    ble_uuid_from_str(&response_uuid, "78dc86b2-6f57-478e-979c-22ed6e135a98");
+    ble_uuid_from_str(&enrol_uuid, "a40698d1-315e-496d-8855-05283e3369a0");
+    ble_uuid_from_str(&telemetry_uuid, "c88c0afb-1519-4b4f-9ca1-e5f9eeffd259");
+
+    if (!bring_up())
+        return false;
     if (have_watch && !have_peer)
         ESP_LOGW(TAG, "watch enrolled before bonding existed: hold BOOT 5 s and enrol it again");
     return true;
