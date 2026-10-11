@@ -147,9 +147,8 @@ static void chunk(ota_chunks *chunks, const cJSON *root, uint32_t now_ms, ota_cm
         total->valuedouble != (int)total->valuedouble || strlen(version) >= OTA_VERSION_MAX)
         return fail(out, true, "Invalid chunk parameters");
     int i = (int)index->valuedouble, n = (int)total->valuedouble;
-    // A chunk from a different update (count or version), or after the set has gone stale, starts again.
-    if (chunks->total != n || strcmp(chunks->version, version) != 0 ||
-        (uint32_t)(now_ms - chunks->started_ms) > OTA_CHUNKS_MAX_AGE_MS)
+    // A chunk from a different update (count or version) starts again (a stale set is already gone).
+    if (chunks->total != n || strcmp(chunks->version, version) != 0)
     {
         ota_cmd_reset(chunks);
         chunks->total = n;
@@ -210,6 +209,9 @@ static void chunk(ota_chunks *chunks, const cJSON *root, uint32_t now_ms, ota_cm
 void ota_cmd_parse(ota_chunks *chunks, const char *json, size_t len, uint32_t now_ms, ota_cmd *out)
 {
     memset(out, 0, sizeof(*out));
+    // A set that hasn't completed in time is freed by whatever comes next, chunk or not.
+    if (chunks->total && (uint32_t)(now_ms - chunks->started_ms) > OTA_CHUNKS_MAX_AGE_MS)
+        ota_cmd_reset(chunks);
     cJSON *root = cJSON_ParseWithLength(json, len);
     const char *command = root ? string_field(root, "command") : NULL;
     if (root == NULL || !cJSON_IsObject(root))

@@ -59,7 +59,8 @@ typedef struct
 void ota_cmd_reset(ota_chunks *chunks);
 
 // Parses one command. `out` is large (the URL), so keep it static or on the heap. `now_ms` is any
-// millisecond clock (it may wrap): a chunk set older than OTA_CHUNKS_MAX_AGE_MS is dropped.
+// millisecond clock (it may wrap): a chunk set older than OTA_CHUNKS_MAX_AGE_MS is dropped by the
+// next command of any kind.
 void ota_cmd_parse(ota_chunks *chunks, const char *json, size_t len, uint32_t now_ms, ota_cmd *out);
 
 // "x.y.z": three dot-separated runs of 1-4 decimal digits, nothing else (it's shown on the watch).

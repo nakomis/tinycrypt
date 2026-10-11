@@ -162,8 +162,11 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   a download must finish in `CONFIG_TINYCRYPT_OTA_DOWNLOAD_DEADLINE_S` (300; `publish-ota.sh` refuses
   < 120) and move 32 KB every 30 s; a failed one (cancel included) refuses updates for 30 s, doubling
   to 15 min (`busy: retry in N s`); an image whose approval timed out or was rejected is refused for
-  10 min (`declined recently`), and no prompt follows an unapproved one within 60 s. A chunk set is
-  capped at `OTA_URL_MAX` as it arrives and dropped after 60 s. The LED pulses **amber** while an update
+  10 min (`declined recently`), and no prompt follows an unapproved one within 60 s. These bound what
+  updates can cost the user; they are **not** a defence against a hostile publisher, who can keep the
+  back-off at its maximum with a junk URL every 15 min and so hold real updates off (it could already
+  do that with `ota_cancel`). Approval is the defence that matters. A chunk set is capped at
+  `OTA_URL_MAX` as it arrives, and one older than 60 s is freed by the next command. The LED pulses **amber** while an update
   waits for approval (blue is a sign-in). An `ota_cancel` sticks until the approval wait it's for ends, and
   wins over a racing approval. **NVS is never erased** to get past an init error (counter, resident keys,
   watch): a new image that can't read it rolls back. Failures report their cause (TLS error, errno,

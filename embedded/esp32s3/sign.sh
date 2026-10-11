@@ -37,7 +37,7 @@ if ! key_b64=$(security find-generic-password -s "$service" -a "$env" -w 2> /dev
     pem=$(AWS_PROFILE=${AWS_PROFILE:-nakom.is-sandbox} AWS_REGION=${AWS_REGION:-eu-west-2} \
         aws ssm get-parameter --name "/tinycrypt/${env}/ota/signing-key" --with-decryption \
         --query Parameter.Value --output text)
-    key_b64=$(printf '%s\n' "$pem" | base64)
+    key_b64=$(printf '%s\n' "$pem" | base64 | tr -d '\n')
     # Through security's stdin, not its argv (where ps would show it). Base64 needs no quoting.
     printf 'add-generic-password -s %s -a %s -T /usr/bin/security -j "%s" -w %s\n' "$service" "$env" \
         "tinycrypt firmware signing key ($env); master copy in SSM /tinycrypt/${env}/ota/signing-key" \
