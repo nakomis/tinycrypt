@@ -6,7 +6,7 @@
 //   online, idle        off                         (one green blink when it first connects)
 //   offline             short amber blink every 3 s (the button still works)
 //   presence wanted     blue, pulsing               ("touch me, or approve on the watch")
-//   watch signing       cyan, fast flicker          (a watch read the challenge)
+//   watch signing       white, fast flicker         (a watch read the challenge)
 //   approved            green, 1 s                  (one-shot)
 //   not given           red, 1 s                    (timed out, cancelled; one-shot)
 //   enrol window open   magenta, pulsing; three green flashes when a watch enrols

@@ -32,7 +32,6 @@ static const rgb_t OFF = {0, 0, 0};
 static const rgb_t WHITE = {255, 255, 255};
 static const rgb_t AMBER = {255, 110, 0};
 static const rgb_t BLUE = {0, 40, 255};
-static const rgb_t CYAN = {0, 200, 255};
 static const rgb_t GREEN = {0, 255, 30};
 static const rgb_t RED = {255, 0, 0};
 static const rgb_t MAGENTA = {255, 0, 200};
@@ -91,7 +90,7 @@ static rgb_t frame(int64_t ms, uint32_t on, bool flashing, led_flash_t kind, int
         }
     }
     if (on & (1u << LED_WATCH_SIGNING))
-        return (ms / 60) % 2 ? CYAN : scale(CYAN, 60);
+        return (ms / 60) % 2 ? WHITE : OFF;  // fast flicker: blue and cyan look alike when dim
     if (on & (1u << LED_PRESENCE))
         return scale(BLUE, 40 + pulse(ms, 1200) * 215 / 255);
     if (on & (1u << LED_ENROL_OPEN))
