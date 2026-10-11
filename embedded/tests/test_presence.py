@@ -371,3 +371,71 @@ def test_a_stalled_message_on_another_channel_does_not_unbind_the_next_request(r
     time.sleep(0.2)
     assert requests(sim)[-1] == f">>> request bound rp=example.com hash={hashlib.sha256(payload).hexdigest()}"
     assert ">>> watch approved" in sim.log
+
+
+# ---- external waits (CRYPT-14: approving an update, not a CTAP request) ----
+
+def wait_for_log(sim, text, timeout=5):
+    end = time.time() + timeout
+    while time.time() < end:
+        hits = [line for line in sim.log if text in line]
+        if hits:
+            return hits[-1]
+        time.sleep(0.02)
+    raise AssertionError(f"{text!r} not in sim log: {sim.log[-10:]}")
+
+
+def test_external_wait_is_bound_labelled_and_approved_by_the_watch(raw):
+    sim, _ = raw("--watch-after", "300", "--up-timeout", "5000", "--external-at", "300")
+    assert wait_for_log(sim, ">>> label ") == ">>> label Install tinycrypt 9.9.9?"
+    assert wait_for_log(sim, ">>> request ").startswith(">>> request bound rp= hash=")
+    assert wait_for_log(sim, ">>> external result").endswith("result 1")
+
+
+def test_external_wait_approved_by_the_button(raw):
+    sim, _ = raw("--watch-after", "0", "--up-timeout", "5000", "--external-at", "300")
+    wait_for_log(sim, ">>> external wait")
+    time.sleep(0.2)
+    sim.press_button()
+    assert wait_for_log(sim, ">>> external result").endswith("result 1")
+
+
+def test_external_wait_times_out(raw):
+    sim, _ = raw("--watch-after", "0", "--up-timeout", "800", "--external-at", "300")
+    assert wait_for_log(sim, ">>> external result").endswith("result 0")
+
+
+def test_external_wait_cancelled_from_another_task(raw):
+    sim, _ = raw("--watch-after", "0", "--up-timeout", "10000", "--external-at", "300", "--external-cancel", "500")
+    start = time.time()
+    assert wait_for_log(sim, ">>> external result").endswith("result 0")
+    assert time.time() - start < 3
+
+
+def test_external_wait_has_no_owner_every_channel_is_busy(raw):
+    sim, hid = raw("--watch-after", "0", "--up-timeout", "3000", "--external-at", "500")
+    a = hid.allocate()  # before the wait starts
+    wait_for_log(sim, ">>> external wait")
+    time.sleep(0.2)
+    # No KEEPALIVEs to anyone, and a CANCEL or INIT from the last channel used can't end it.
+    hid.send(a, CANCEL)
+    hid.send(a, INIT, os.urandom(8))
+    _, err = hid.until(a, {ERROR}, 1)
+    assert err is not None and err[2][0] == CHANNEL_BUSY
+    hid.send(a, CBOR, make_credential())
+    seen, err = hid.until(a, {ERROR}, 1)
+    assert err is not None and err[2][0] == CHANNEL_BUSY
+    assert not [m for m in seen if m[1] == KEEPALIVE]
+    hid.send(BROADCAST, INIT, os.urandom(8))
+    _, err = hid.until(BROADCAST, {ERROR}, 1)
+    assert err is not None and err[2][0] == CHANNEL_BUSY
+    assert wait_for_log(sim, ">>> external result").endswith("result 0")
+    # Afterwards the key serves CTAP again, and its request is a new action with its own hash.
+    hid.send(a, CBOR, make_credential())
+    time.sleep(0.3)
+    sim.press_button()
+    _, resp = hid.until(a, {CBOR}, 3)
+    assert resp is not None and resp[2][0] == 0
+    lines = [line for line in sim.log if ">>> request " in line]
+    assert len([line for line in sim.log if line.startswith(">>> label ")]) == 1
+    assert lines[-1].startswith(">>> request bound rp=example.com hash=") and lines[-1].split("hash=")[1] != lines[0].split("hash=")[1]
