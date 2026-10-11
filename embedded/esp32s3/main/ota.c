@@ -11,6 +11,7 @@
 
 #include "cJSON.h"
 #include "esp_app_desc.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -210,7 +211,14 @@ static const char *download(const esp_partition_t *slot, char *why, size_t why_l
     esp_err_t err = esp_http_client_open(http, 0);
     if (err != ESP_OK)
     {
-        snprintf(why, why_len, "download failed: %s", esp_err_to_name(err));
+        // Say why, since the key's log is usually out of reach (the native USB port is the key): the
+        // TLS stack's error and certificate-verify flags, and how much internal RAM there was.
+        int tls_code = 0, tls_flags = 0;
+        esp_err_t tls = esp_http_client_get_and_clear_last_tls_error(http, &tls_code, &tls_flags);
+        snprintf(why, why_len, "download failed: %s (tls %s -0x%x flags 0x%x, heap %u/%u)", esp_err_to_name(err),
+                 esp_err_to_name(tls), (unsigned)-tls_code, (unsigned)tls_flags,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         err_text = why;
         goto out;
     }
@@ -330,7 +338,7 @@ static void finish(void)
 static void ota_task(void *arg)
 {
     (void)arg;
-    static char why[96];
+    static char why[160];
     for (;;)
     {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);

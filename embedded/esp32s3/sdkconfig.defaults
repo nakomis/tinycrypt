@@ -47,3 +47,8 @@ CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
 CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
 CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y
 CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n
+
+# Two TLS sessions at once during an update (MQTT and the S3 download) alongside Wi-Fi and NimBLE, on
+# a module with no PSRAM (the MINI-1-N8): allocate TLS record buffers only while they're needed.
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
