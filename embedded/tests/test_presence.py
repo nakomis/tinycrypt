@@ -277,7 +277,7 @@ def test_the_wait_knows_the_site_and_the_request_hash(raw):
     hid.send(a, CBOR, payload)
     hid.until(a, {CBOR}, 3)
     time.sleep(0.2)
-    assert requests(sim)[-1] == f">>> request rp=example.com hash={hashlib.sha256(payload).hexdigest()}"
+    assert requests(sim)[-1] == f">>> request bound rp=example.com hash={hashlib.sha256(payload).hexdigest()}"
 
 
 def test_a_different_request_is_a_new_action_even_on_the_same_channel(raw):
@@ -289,4 +289,85 @@ def test_a_different_request_is_a_new_action_even_on_the_same_channel(raw):
     hid.until(a, {MSG}, 2)
     time.sleep(0.2)
     assert actions(sim) == [">>> new action", ">>> new action"]
-    assert all(r.startswith(">>> request rp= hash=") for r in requests(sim))  # U2F: no site name
+    assert all(r.startswith(">>> request bound rp= hash=") for r in requests(sim))  # U2F: no site name
+
+
+# ---- Binding fails closed (CRYPT-18 review): what the watch shows must be what solo1 signs for ----
+
+def cbor_map(*pairs):
+    """A CBOR map in the given order, repeats allowed (a dict can't express a repeated key)."""
+    assert len(pairs) < 24
+    return bytes([0xA0 + len(pairs)]) + b"".join(cbor.encode(k) + cbor.encode(v) for k, v in pairs)
+
+
+def make_credential_with(rp_map):
+    return b"\x01" + cbor_map(
+        (1, os.urandom(32)),
+        (2, rp_map),
+        (3, {"id": b"presence-test", "name": "acme", "displayName": "Acme"}),
+        (4, [{"type": "public-key", "alg": -7}]),
+    )
+
+
+def watch_offered(raw, payload):
+    """Sends a request the watch would approve 100 ms in; returns the logged request line and
+    whether the watch approved it."""
+    sim, hid = raw("--watch-after", "100", "--up-timeout", "800")
+    a = hid.allocate()
+    hid.send(a, CBOR, payload)
+    hid.until(a, {CBOR}, 3)
+    time.sleep(0.2)
+    return requests(sim)[-1], ">>> watch approved" in sim.log
+
+
+def test_a_repeated_rp_is_button_only(raw):
+    payload = b"\x01" + cbor_map(
+        (1, os.urandom(32)),
+        (2, {"id": "bank.com", "name": "Bank"}),
+        (2, {"id": "evil.com", "name": "Evil"}),  # solo1 keeps the last
+        (3, {"id": b"presence-test", "name": "acme", "displayName": "Acme"}),
+        (4, [{"type": "public-key", "alg": -7}]),
+    )
+    line, approved = watch_offered(raw, payload)
+    assert line.startswith(">>> request unbound rp= ") and not approved
+
+
+def test_a_repeated_rp_id_is_button_only(raw):
+    rp = bytes([0xA3]) + b"".join(cbor.encode(x) for x in ("id", "bank.com", "id", "evil.com", "name", "x"))
+    payload = (b"\x01" + bytes([0xA4]) + cbor.encode(1) + cbor.encode(os.urandom(32)) + cbor.encode(2) + rp
+               + cbor.encode(3) + cbor.encode({"id": b"presence-test", "name": "acme", "displayName": "Acme"})
+               + cbor.encode(4) + cbor.encode([{"type": "public-key", "alg": -7}]))
+    line, approved = watch_offered(raw, payload)
+    assert line.startswith(">>> request unbound rp= ") and not approved
+
+
+@pytest.mark.parametrize("rp_id", ["bank.com\0.evil.com", "evil.com\nApprove bank.com", "Bank.com", "bank.com\u202e"])
+def test_an_rp_id_that_is_not_a_plain_host_name_is_button_only(raw, rp_id):
+    line, approved = watch_offered(raw, make_credential_with({"id": rp_id, "name": "x"}))
+    assert line.startswith(">>> request unbound rp= ") and not approved
+
+
+def test_a_long_host_name_is_shown_in_full(raw):
+    rp_id = ".".join(["a" * 60] * 4) + ".example.com"  # 256 > 253: trimmed to fit DNS
+    rp_id = rp_id[-253:].lstrip(".")
+    line, approved = watch_offered(raw, make_credential_with({"id": rp_id, "name": "x"}))
+    assert line.startswith(f">>> request bound rp={rp_id} hash=") and approved
+
+
+def test_a_stalled_message_on_another_channel_does_not_unbind_the_next_request(raw):
+    import hashlib
+    sim, hid = raw("--watch-after", "100", "--up-timeout", "2000")
+    a, b = hid.allocate(), hid.allocate()
+    # b announces a long message and never finishes it; solo1 times it out after 750 ms.
+    stalled = b + bytes([CBOR]) + struct.pack(">H", 1000) + os.urandom(57)
+    hid.sock.sendto(stalled.ljust(REPORT, b"\0"), hid.addr)
+    # An oversized one too (more than solo1's 7609-byte buffer): refused outright.
+    huge = b + bytes([CBOR]) + struct.pack(">H", 8000) + os.urandom(57)
+    hid.sock.sendto(huge.ljust(REPORT, b"\0"), hid.addr)
+    time.sleep(1.0)
+    payload = make_credential()
+    hid.send(a, CBOR, payload)
+    hid.until(a, {CBOR}, 3)
+    time.sleep(0.2)
+    assert requests(sim)[-1] == f">>> request bound rp=example.com hash={hashlib.sha256(payload).hexdigest()}"
+    assert ">>> watch approved" in sim.log

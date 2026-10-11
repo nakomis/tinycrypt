@@ -59,6 +59,16 @@ static void advertise(void);
 static void arm(void *ctx)
 {
     (void)ctx;
+    if (!presence_request_bound())
+    {
+        // Not a request the watch can be told about unambiguously (presence.h): button only.
+        taskENTER_CRITICAL(&lock);
+        challenge_live = false;
+        approved = false;
+        taskEXIT_CRITICAL(&lock);
+        ESP_LOGW(TAG, "request not bound: watch not offered, press the button");
+        return;
+    }
     uint8_t nonce[NONCE_LEN];
     esp_fill_random(nonce, sizeof(nonce));  // outside the critical section
     taskENTER_CRITICAL(&lock);

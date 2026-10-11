@@ -5,5 +5,6 @@ idf_component_register(
   INCLUDE_DIRS ${SOLO_CORE_INCLUDES}
 )
 target_compile_definitions(${COMPONENT_LIB} PUBLIC ${SOLO_CORE_DEFINES})
+set_source_files_properties(${SOLO1}/fido2/ctaphid.c PROPERTIES COMPILE_DEFINITIONS "${SOLO_CTAPHID_DEFINES}")
 # Upstream code: keep its warnings out of our build output.
 target_compile_options(${COMPONENT_LIB} PRIVATE -w -fcommon)

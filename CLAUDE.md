@@ -43,12 +43,18 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   `presence_is_new_action()` groups U2F's 750 ms re-asks on one channel into one action (one push, one
   challenge); a new channel, a cancel, an approval, a 3 s gap or a retry after a full timeout starts a
   new one, and a cancel also discards the challenge and any unused approval. Sim: `--presence button+watch --watch-after MS --up-timeout MS`.
-- **Approval is bound to the request** (CRYPT-18): the wait reassembles the requesting channel's CTAP
-  message, hashes it (SHA-256 of the CTAPHID payload) and reads the rpId (CTAP2 only; U2F has just a
-  hash). The push says "Sign in to <rp>?" and carries `tc.req`; the challenge is protocol **v1**,
+- **Approval is bound to the request** (CRYPT-18): solo1's `ctaphid.c` is compiled with
+  `ctap_request`/`u2f_request` renamed to our `tc_*` wrappers (`SOLO_CTAPHID_DEFINES`), so the wait
+  hashes the exact buffer solo1 is acting on (SHA-256 of the CBOR command byte and map, or the U2F
+  APDU); never mirror solo1's CTAPHID reassembly. It reads the rpId (CTAP2 only; U2F has just a hash).
+  The push says "Sign in to <rp>?" and carries `tc.req`; the challenge is protocol **v1**,
   `"tinycrypt-presence-v1" ‖ nonce32 ‖ reqhash32`; the watch signs only if the challenge's hash matches
-  the push it was tapped from, and a different request hash is always a new user action. The app's
-  own "Arm in 10 s" test notification has no `tc.req`, so it accepts any v1 challenge.
+  the push it was tapped from, and a different request hash is always a new user action.
+  **Fails closed**: a wait is *bound* (`presence_request_bound`) only for U2F register/authenticate or
+  a makeCredential/getAssertion whose rpId appears once and is a plain lower-case host name (≤ 253);
+  otherwise (repeated keys, NUL, odd characters, CTAP2 reset, vendor commands) there's no push and no
+  BLE challenge: button only. The watch refuses a remote push without a valid `tc.req`; only the
+  app's own local "Arm in 10 s" test notification may approve without one.
 - **Watch over BLE on the key** (`esp32s3/main/ble_presence.c`, NimBLE, `CONFIG_TINYCRYPT_WATCH_BLE`): the
   key advertises the protocol GATT service; a challenge is
   readable during a wait (and up to 3 s after, for U2F re-asks) and approves once. No pairing yet, so

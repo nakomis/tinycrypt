@@ -82,8 +82,20 @@ final class AppDelegate: NSObject, WKApplicationDelegate, UNUserNotificationCent
             AppModel.shared.record("\(response.actionIdentifier) (no BLE) \(context)")
             return
         }
+        // A push from the key must name its request, and the challenge must match it. Only the app's
+        // own local test notification ("Arm in 10 s") has none; a push without a valid hash is refused
+        // rather than allowed to approve whatever challenge is on offer.
+        let expected: Data?
+        if response.notification.request.trigger is UNPushNotificationTrigger {
+            guard let hash = Presence.requestHash(response.notification) else {
+                AppModel.shared.record("REFUSED: push carries no valid request hash \(context)")
+                return
+            }
+            expected = hash
+        } else {
+            expected = nil
+        }
         let route = AppModel.shared.route
-        let expected = Presence.requestHash(response.notification)
         let report = await PresenceClient(mode: .approve, route: route, start: tap, context: context,
                                           expectedRequest: expected).run()
         AppModel.shared.record(report)
@@ -129,19 +141,26 @@ enum Presence {
         return out
     }
 
-    /// The request hash a push from the key carries (tc.req, hex), or nil for a local test notification.
+    /// The request hash a push from the key carries (tc.req: 64 lower-case hex digits), or nil if it
+    /// is missing or malformed. All zeros is refused too: the key never binds a wait to that.
     static func requestHash(_ notification: UNNotification) -> Data? {
         guard let tc = notification.request.content.userInfo["tc"] as? [String: Any],
-              let hex = tc["req"] as? String, hex.count == 64 else { return nil }
-        var bytes = Data(capacity: 32)
-        var index = hex.startIndex
-        while index < hex.endIndex {
-            let next = hex.index(index, offsetBy: 2)
-            guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
-            bytes.append(byte)
-            index = next
+              let hex = tc["req"] as? String else { return nil }
+        let digits = Array(hex.utf8)
+        guard digits.count == 2 * PresenceProtocol.requestHashLength else { return nil }
+        func nibble(_ c: UInt8) -> UInt8? {
+            switch c {
+            case UInt8(ascii: "0")...UInt8(ascii: "9"): return c - UInt8(ascii: "0")
+            case UInt8(ascii: "a")...UInt8(ascii: "f"): return c - UInt8(ascii: "a") + 10
+            default: return nil
+            }
         }
-        return bytes
+        var bytes = Data(capacity: PresenceProtocol.requestHashLength)
+        for i in stride(from: 0, to: digits.count, by: 2) {
+            guard let hi = nibble(digits[i]), let lo = nibble(digits[i + 1]) else { return nil }
+            bytes.append(hi << 4 | lo)
+        }
+        return bytes.contains(where: { $0 != 0 }) ? bytes : nil
     }
 
     static func schedule(after seconds: TimeInterval) async throws {

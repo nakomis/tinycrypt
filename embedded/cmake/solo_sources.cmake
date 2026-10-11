@@ -47,6 +47,12 @@ set(TINYCRYPT_PORT_SOURCES
   ${TINYCRYPT_ROOT}/port/presence_sig.c
 )
 
+# Binding (CRYPT-18, port/presence.c): ctaphid.c dispatches complete requests through our wrappers,
+# which note the exact buffer solo1 acts on before calling the real functions.
+# Applied where the target is defined (set_source_files_properties isn't scriptable, and ESP-IDF
+# also reads this file in script mode).
+set(SOLO_CTAPHID_DEFINES ctap_request=tc_ctap_request u2f_request=tc_u2f_request)
+
 set(SOLO_CORE_INCLUDES
   ${TINYCRYPT_ROOT}/port
   ${SOLO1}/fido2
