@@ -121,7 +121,11 @@ static char serial_string[16] = "0001";
 static const char *string_descriptor[] = {
     (const char[]){0x09, 0x04}, // English
     "nakomis",
+#ifdef TINYCRYPT_INSECURE_SOFT_KEY
     "tinycrypt INSECURE TEST KEY",
+#else
+    "tinycrypt",
+#endif
     serial_string,
     "FIDO",
 };
@@ -392,6 +396,35 @@ static bool load_attestation_cert(void)
     return true;
 }
 
+// A key whose ATECC608B has worked is marked in NVS, and a soft-key image refuses to run on it:
+// otherwise an update with the wrong image would quietly move its secrets into plain NVS. (The
+// other way round, an ATECC image finds no provisioned chip.) Refusing fails the self-test, so an
+// update rolls back.
+static bool keystore_allowed(void)
+{
+#ifdef TINYCRYPT_INSECURE_SOFT_KEY
+    uint8_t atecc = 0;
+    if (nvs_get_u8(nvs, "ks_atecc", &atecc) == ESP_OK && atecc == 1)
+    {
+        ESP_LOGE(TAG, "this key uses an ATECC608B: a soft-key image must not run on it");
+        return false;
+    }
+#endif
+    return true;
+}
+
+static void keystore_mark(void)
+{
+#ifdef TINYCRYPT_KEYSTORE_ATECC
+    uint8_t atecc = 0;
+    if (nvs_get_u8(nvs, "ks_atecc", &atecc) != ESP_OK || atecc != 1)
+    {
+        ESP_ERROR_CHECK(nvs_set_u8(nvs, "ks_atecc", 1));
+        ESP_ERROR_CHECK(nvs_commit(nvs));
+    }
+#endif
+}
+
 void device_attestation_read_cert_der(uint8_t *dst)
 {
     memmove(dst, attest_cert, attest_cert_len);
@@ -626,9 +659,12 @@ void app_main(void)
 
     // No radio yet: the ADC noise feeds the RNG that the soft element's first keys come from.
     bootloader_random_enable();
-    se_ok = se_init() == 0 && load_attestation_cert();
+    se_ok = keystore_allowed() && se_init() == 0 && load_attestation_cert();
     if (se_ok)
+    {
+        keystore_mark();
         ESP_LOGI(TAG, "secure element: %s", se_backend());
+    }
     else
         ESP_LOGE(TAG, "secure element (%s) unavailable: no CTAP; updates still work", se_backend());
 
