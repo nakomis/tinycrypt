@@ -203,6 +203,18 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   configuration, no per-key strings, signature against the committed public key). Then update from Fleet's
   UI. The Thing's attributes (`capabilities=ota,ota-signed,ota-approval`) make Fleet refuse unsigned builds
   and expect approval.
+- **Watch app to TestFlight is CI's** (CRYPT-27, the `watch-testflight` job): a PR touching `watch/TinycryptWatch/`
+  or `watch/ci/` gets the next version from the tracker (project `tinycrypt-watch`; build number = run number
+  and attempt), is archived with **manual** distribution signing (`watch/ci/ci-signing.xcconfig`: CI's own
+  Apple Distribution certificate, and the profiles "tinycrypt CI iOS stub App Store" / "tinycrypt CI watch App
+  Store", told apart by SDK) and uploaded by `xcodebuild -exportArchive` (`watch/ci/ExportOptions.plist`).
+  Secrets in sandbox SSM `/tinycrypt/sandbox/apple/*`: `asc-key-id`, `asc-issuer-id`, `asc-key` (the App
+  Manager API key's `.p8`) and `dist-key` (the certificate's private key; the certificate itself is fetched
+  from the API by public key, `watch/ci/asc.py`, so a renewal needs no CI change). Your own "Distribution
+  Managed" certificate is Xcode's cloud signing and can't be exported, hence CI's own. Certificate and
+  profiles expire **12 Oct 2027**. A TestFlight build is distribution-signed (`aps-environment` production),
+  so it gets **prod** APNs pushes: register its token with `sns-platform.sh` in prod, not sandbox; Xcode
+  development builds stay on the APNs sandbox. App Store Connect app id 6821087095.
 - **Push content is device-supplied**: the key writes the alert text, which goes to APNs verbatim.
   Fine while keys are ours; the push carries no authority anyway (approval needs the signed BLE challenge).
 - **Stale prompts**: an IoT SNS action can't set message attributes, so there's no

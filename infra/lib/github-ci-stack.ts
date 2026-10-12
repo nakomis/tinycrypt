@@ -19,7 +19,8 @@ const subjects = (context: string) => [
 ];
 
 /**
- * CRYPT-20: the role GitHub Actions assumes to publish firmware. A PR's build goes to sandbox; its
+ * CRYPT-20: the role GitHub Actions assumes to publish firmware (and, in sandbox, to sign and upload
+ * the watch app to TestFlight: CRYPT-27). A PR's build goes to sandbox; its
  * merge sends the same build to prod, signed with prod's key. Narrow on purpose: read this
  * environment's signing key (and, in sandbox, the Wi-Fi SSID an image must not contain), put and
  * check firmware under tinycrypt/ in this environment's bucket, and call the shared deployment
@@ -54,7 +55,9 @@ export class GithubCiStack extends cdk.Stack {
             actions: ['ssm:GetParameter'],
             resources: [
                 param(`/tinycrypt/${deployEnv}/ota/signing-key`),
-                ...(deployEnv === 'sandbox' ? [param('/Nakomis/Wifi/SSID')] : []),
+                // Sandbox only: the Wi-Fi SSID an image mustn't contain, and the watch app's TestFlight
+                // signing (CRYPT-27: App Store Connect key, Apple Distribution private key).
+                ...(deployEnv === 'sandbox' ? [param('/Nakomis/Wifi/SSID'), param('/tinycrypt/sandbox/apple/*')] : []),
             ],
         }));
         // SecureStrings use the account's aws/ssm key: decrypt only through SSM.
