@@ -468,4 +468,4 @@ jobs:
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key)=\(.value.result)"'
           # Every job passed; the publishing ones may also be skipped (nothing of theirs changed, or main).
           echo "$RESULTS" | jq -e 'to_entries | all(.value.result == "success"
-            or (.value.result == "skipped" and (.key | test("^(firmware-|watch-testflight)")))))' > /dev/null
+            or (.value.result == "skipped" and (.key | test("^(firmware-|watch-testflight)"))))' > /dev/null
