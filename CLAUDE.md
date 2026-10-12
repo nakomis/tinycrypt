@@ -114,7 +114,8 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   (a locked slot is how a rerun, and `se_init`, know the key is ours; it also stops any firmware
   replacing them). Every chip call holds one mutex (CTAP and MQTT tasks). A board whose ATECC has worked is marked in
   NVS (`ks_atecc`) and refuses a soft-key image, so a wrong update rolls back. Without a working element
-  there's no CTAP, but update approvals still run.
+  there's no CTAP (LED fault) and, since the IoT TLS key is in the element too, no IoT connection, so no
+  updates either: a key whose element fails is reflashed over USB. (A new image without one rolls back.)
 - **Soft key is INSECURE, TEST ONLY**: gated behind `TINYCRYPT_INSECURE_SOFT_KEY`, loud boot
   banner, must not build in release config. Only ever register it against the read-only Identity Center test user.
 - **Watch signature convention** (CRYPT-10, proven with a real Secure Enclave key): the watch signs
