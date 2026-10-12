@@ -7,6 +7,11 @@
 // Every call holds one mutex: the CTAP task (HMACs, attestation) and the MQTT task (the TLS
 // signature, se_tls.c) both use the chip, and cryptoauthlib has no locking of its own. A
 // sequence like Nonce then DeriveKey must not be split by another command.
+//
+// esp-cryptoauthlib's I2C HAL turns ACK checking off, so with no chip on the bus every transfer
+// "succeeds" and reads 0xFF, which cryptoauthlib takes for "busy" and polls for minutes per
+// command (atcab_init already reads the chip). So se_atecc_open first wakes the chip and probes
+// its address with ACKs checked, on a bus of its own that it frees before cryptoauthlib makes one.
 #include "secure_element.h"
 #include "se_atecc.h"
 
@@ -15,7 +20,9 @@
 
 #include "atecc_config.h"
 #include "cryptoauthlib.h"
+#include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "sdkconfig.h"
@@ -41,6 +48,31 @@ static int check(const char *what, ATCA_STATUS s)
     return -1;
 }
 
+// Whether an ATECC answers at our address. It sleeps, and then ACKs nothing, so wake it first:
+// SDA low for at least 60 us (an address byte of zeros at 100 kHz holds it low for ~80 us), then
+// 1.5 ms for it to start.
+static bool chip_present(void)
+{
+    i2c_master_bus_config_t bus_cfg = {
+        .i2c_port = 0,
+        .sda_io_num = CONFIG_ATCA_I2C_SDA_PIN,
+        .scl_io_num = CONFIG_ATCA_I2C_SCL_PIN,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    i2c_master_bus_handle_t bus;
+    if (i2c_new_master_bus(&bus_cfg, &bus) != ESP_OK)
+        return false;
+    (void)i2c_master_probe(bus, 0x00, 10);  // the wake pulse; nothing answers it
+    esp_rom_delay_us(1500);
+    esp_err_t rc = i2c_master_probe(bus, CONFIG_ATCA_I2C_ADDRESS >> 1, 50);
+    i2c_del_master_bus(bus);
+    if (rc != ESP_OK)
+        ESP_LOGE(TAG, "no ATECC608 answers at 0x%02x (8-bit): %s", CONFIG_ATCA_I2C_ADDRESS, esp_err_to_name(rc));
+    return rc == ESP_OK;
+}
+
 int se_atecc_open(void)
 {
     static ATCAIfaceCfg cfg = {
@@ -54,7 +86,13 @@ int se_atecc_open(void)
     };
     if (lock == NULL && (lock = xSemaphoreCreateMutex()) == NULL)
         return -1;
-    return check("atcab_init", WITH_LOCK(atcab_init(&cfg)));
+    static bool open;
+    if (open)
+        return 0;  // cryptoauthlib holds the bus now, so the probe couldn't run again anyway
+    if (!chip_present() || check("atcab_init", WITH_LOCK(atcab_init(&cfg))) != 0)
+        return -1;
+    open = true;
+    return 0;
 }
 
 // The configuration zone must hold exactly atecc_config.h's settings, and both zones be locked.
