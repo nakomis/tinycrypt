@@ -128,8 +128,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Type-check
         run: pnpm run build
-      - name: Synth (sandbox)
-        run: pnpm run ci-synth-sandbox
+      - name: Synth (sandbox and prod)
+        run: pnpm run ci-synth-sandbox && pnpm run ci-synth-prod
 
   ci-status:
     name: CI Status

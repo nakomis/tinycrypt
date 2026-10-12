@@ -5,12 +5,14 @@
 #   2. A platform endpoint for the watch's device token, subscribed to the presence topic.
 #
 #   infra/scripts/sns-platform.sh <watch-device-token>
+#   infra/scripts/sns-platform.sh --app-only      just the platform application (CRYPT-26: prod, before
+#                                                 a TestFlight watch build has given it a token)
 #
 # Needs AWS_PROFILE (default nakom.is-sandbox) and NPM_ENVIRONMENT (default sandbox). A
 # development-signed watch build only gets pushes from the APNs sandbox, hence APNS_SANDBOX.
 set -euo pipefail
 
-token=${1:?usage: sns-platform.sh <watch-device-token>}
+token=${1:?usage: sns-platform.sh <watch-device-token> | --app-only}
 env=${NPM_ENVIRONMENT:-sandbox}
 export AWS_PROFILE=${AWS_PROFILE:-nakom.is-sandbox}
 export AWS_REGION=${AWS_REGION:-eu-west-2}
@@ -56,6 +58,8 @@ else
     aws sns set-platform-application-attributes --platform-application-arn "$app_arn" --attributes "file://${attrs}"
     echo "updated platform application ${app_arn}"
 fi
+
+[ "$token" = --app-only ] && exit 0
 
 # Creating an endpoint for an existing token returns the existing endpoint.
 endpoint_arn=$(aws sns create-platform-endpoint --platform-application-arn "$app_arn" --token "$token" \

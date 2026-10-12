@@ -18,7 +18,8 @@
 # ever sends AWS a CSR.
 #
 # Needs AWS_PROFILE (default nakom.is-sandbox) and NPM_ENVIRONMENT (default sandbox). The house
-# Wi-Fi credentials are read from /Nakomis/Wifi/* (as catcam does), via WIFI_PROFILE (default AWS_PROFILE).
+# Wi-Fi credentials are read from /Nakomis/Wifi/* (as catcam does), via WIFI_PROFILE (default nakom.is-sandbox: they live only in the sandbox account,
+# so a prod key reads them from there too).
 set -euo pipefail
 umask 077
 
@@ -34,7 +35,7 @@ done
 env=${NPM_ENVIRONMENT:-sandbox}
 export AWS_PROFILE=${AWS_PROFILE:-nakom.is-sandbox}
 export AWS_REGION=${AWS_REGION:-eu-west-2}
-wifi_profile=${WIFI_PROFILE:-$AWS_PROFILE}
+wifi_profile=${WIFI_PROFILE:-nakom.is-sandbox}
 platform=$([ "$env" = prod ] && echo APNS || echo APNS_SANDBOX)
 
 here=$(cd "$(dirname "$0")" && pwd)

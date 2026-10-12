@@ -204,8 +204,14 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   its own copy in SSM at `/tinycrypt/{env}/apns/{team-id,key-id,private-key}`, put there by hand.
   `VH26CFZ5GD`, still named in the cert portal's `/home-certs/*/apns/key-id`, is revoked (APNs says
   `InvalidProviderToken`).
-- **Infra deploys**: `cd infra && pnpm run deploy-sandbox` (profile `nakom.is-sandbox`). The account
-  comes from the profile, never a literal.
+- **Infra deploys**: `cd infra && pnpm run deploy-sandbox` (profile `nakom.is-sandbox`), or `diff-prod` /
+  `deploy-prod` (profile `nakom.is-prod`; asks before IAM changes, and only with Martin's OK). The account
+  comes from the profile, never a literal. **Keys are listed per environment in `infra/keys.json`**
+  (CRYPT-26): a deploy declares every key, so add one there before `provision-key.sh`; a key missing from
+  the list has its Thing deleted. **Prod** (CRYPT-26) is set up but unused: no key goes there until the
+  ATECC, the PCB, secure boot and flash encryption are done. Prod pushes need a distribution-signed
+  (TestFlight) watch build, since a development build only gets APNs sandbox pushes (CRYPT-27); until then
+  prod's platform app has no endpoint (`sns-platform.sh --app-only`). The house Wi-Fi is only in sandbox SSM.
 
 ## Architecture diagrams
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import * as fs from 'fs';
+import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
 import { KeyStack } from '../lib/key-stack';
 import { PushStack } from '../lib/push-stack';
@@ -20,8 +22,12 @@ new PushStack(app, 'TinycryptPushStack', {
     description: `tinycrypt presence push: IoT rule -> SNS -> APNs -> watch (${deployEnv})`,
 });
 
-// One IoT Thing per physical key: `-c keys=key-1,key-2` (default key-1).
-const keyNames = String(app.node.tryGetContext('keys') ?? 'key-1').split(',').map(k => k.trim()).filter(Boolean);
+// One IoT Thing per physical key, listed per environment in infra/keys.json (CRYPT-26). Committed,
+// so every deploy declares every key: a key left out of a deploy would have its Thing deleted.
+const keyNames: string[] = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'keys.json'), 'utf8'))[deployEnv];
+if (!Array.isArray(keyNames) || keyNames.some(k => !/^key-[0-9]+$/.test(k)) || new Set(keyNames).size !== keyNames.length) {
+    throw new Error(`infra/keys.json: "${deployEnv}" must be a list of distinct names like key-1`);
+}
 
 new KeyStack(app, 'TinycryptKeyStack', {
     env,
