@@ -5,7 +5,35 @@ on:
   push:
     branches: [main]
 
+# A PR's firmware is published to sandbox; a newer push to the same PR supersedes it. Main's runs
+# (which publish to prod) are never cancelled.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  AWS_REGION: eu-west-2
+  # CRYPT-20: which secure element the published firmware uses. Prod takes only ATECC builds; until
+  # the default is the ATECC (CRYPT-22, once key-1 has its chip), merges publish nothing to prod.
+  FIRMWARE_KEYSTORE: soft
+  ESPTOOL_VERSION: "4.12.0"  # ESP-IDF v5.5's
+
 jobs:
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      firmware: ${{ steps.filter.outputs.firmware }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            firmware:
+              - 'embedded/**'
+              - '.github/workflows/ci.yml'
+
   mac-sim:
     name: Mac sim + python-fido2
     runs-on: macos-latest
@@ -108,6 +136,188 @@ jobs:
             echo "found the old hyphenated name: the repo is now 'tinycrypt'"; exit 1
           fi
 
+  # ── Firmware publishing (CRYPT-20) ───────────────────────────────────────────────────────────
+  # A PR that touches the firmware: compute the next version once, build it once (unsigned), sign
+  # that with the sandbox key and publish it to sandbox. Its merge: the same unsigned build, signed
+  # with the prod key, to prod. Fleet then offers it; every install still needs the watch.
+  firmware-version:
+    name: Firmware version
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.firmware == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      version: ${{ steps.free.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_SANDBOX_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      # The tracker's sandbox latest is the high-water mark; version.txt only seeds it (and labels
+      # local builds).
+      - name: Seed from version.txt
+        run: |
+          printf '{"version": "%s"}\n' "$(tr -d '[:space:]' < embedded/esp32s3/version.txt)" > version.json
+      - name: Compute version
+        id: compute
+        uses: nakomis/nakomis-infra/.github/actions/compute-version@main
+        env:
+          # The bump keyword (alone on a line) is read from the PR, not the synthetic merge commit.
+          COMMIT_MESSAGE: |
+            ${{ github.event.pull_request.title }}
+            ${{ github.event.pull_request.body }}
+        with:
+          project: tinycrypt
+          environment: sandbox
+          version-file: version.json
+      # A version already in the bucket (published by hand, or a run that failed before recording
+      # it) is never reused: step past it.
+      - name: Skip versions already published
+        id: free
+        env:
+          VERSION: ${{ steps.compute.outputs.version }}
+        run: |
+          v=$VERSION
+          while aws s3api head-object --bucket nakomis-firmware-sandbox --key "tinycrypt/$v/firmware.bin" > /dev/null 2>&1; do
+            IFS=. read -r a b c <<< "$v"; v="$a.$b.$((c + 1))"
+          done
+          [ "$v" = "$VERSION" ] || echo "::notice::$VERSION is already published; using $v"
+          printf '{\n  "version": "%s"\n}\n' "$v" > version.json
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  firmware-build:
+    name: Firmware build
+    needs: firmware-version
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5
+    defaults:
+      run:
+        shell: bash
+        working-directory: embedded
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch solo1 and the libraries it builds
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule update --init third_party/solo1
+          git -C third_party/solo1 submodule update --init crypto/cifra crypto/micro-ecc crypto/tiny-AES-c tinycbor
+      - name: Build (unsigned)
+        env:
+          VERSION: ${{ needs.firmware-version.outputs.version }}
+        run: |
+          . "$IDF_PATH/export.sh"
+          cd esp32s3
+          echo "$VERSION" > version.txt
+          case "$FIRMWARE_KEYSTORE" in
+            soft) keystore=(-DTINYCRYPT_INSECURE_SOFT_KEY=ON) ;;
+            atecc) keystore=(-DTINYCRYPT_INSECURE_SOFT_KEY=OFF -DTINYCRYPT_KEYSTORE_ATECC=ON) ;;
+            *) echo "FIRMWARE_KEYSTORE must be soft or atecc"; exit 1 ;;
+          esac
+          idf.py "${keystore[@]}" build
+          . tools/image-checks.sh
+          check_image_version build/tinycrypt.bin "$VERSION"
+          check_image_config build/config/sdkconfig.h false
+          check_image_strings build/tinycrypt.bin sandbox
+          check_image_strings build/tinycrypt.bin prod
+          mkdir -p ../../firmware
+          cp build/tinycrypt.bin ../../firmware/tinycrypt-unsigned.bin
+          printf '{\n  "version": "%s"\n}\n' "$VERSION" > ../../firmware/version.json
+          echo "$FIRMWARE_KEYSTORE" > ../../firmware/keystore
+          # What main must hold for the merge to publish these bytes (see firmware-prod).
+          git rev-parse 'HEAD^{tree}' > ../../firmware/tree
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: firmware/
+          if-no-files-found: error
+
+  firmware-sandbox:
+    name: Firmware publish (sandbox)
+    needs: [firmware-version, firmware-build]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: firmware
+      - run: pip install --quiet "esptool==${ESPTOOL_VERSION}"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_SANDBOX_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Sign and publish
+        env:
+          VERSION: ${{ needs.firmware-version.outputs.version }}
+        run: embedded/esp32s3/tools/ci-publish.sh sandbox firmware/tinycrypt-unsigned.bin "$VERSION"
+      - name: Record deployment
+        uses: nakomis/nakomis-infra/.github/actions/record-deployment@main
+        with:
+          project: tinycrypt
+          environment: sandbox
+          version-file: firmware/version.json
+
+  firmware-prod:
+    name: Firmware publish (prod)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      # The merged PR's last successful CI run built (and sandbox published) these bytes, from the
+      # same tree main now holds. Anything else (a direct push, main moved on since, a soft-key
+      # build) publishes nothing.
+      - name: Find the PR's build
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          skip() { echo "::notice::$1: nothing published to prod"; echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          pr=$(gh api "repos/$REPO/commits/$GITHUB_SHA/pulls" --jq '.[0].number // empty')
+          [ -n "$pr" ] || skip "not from a PR"
+          head=$(gh api "repos/$REPO/pulls/$pr" --jq .head.sha)
+          run=$(gh run list -R "$REPO" --workflow CI --commit "$head" --event pull_request --status success \
+                --json databaseId --jq '.[0].databaseId // empty')
+          [ -n "$run" ] || skip "PR #$pr has no successful CI run at its head"
+          gh run download "$run" -R "$REPO" -n firmware -D firmware 2> /dev/null || skip "PR #$pr published no firmware"
+          if [ "$(cat firmware/tree)" != "$(git rev-parse 'HEAD^{tree}')" ]; then
+            echo "::error::main isn't the tree PR #$pr's build came from (main moved on): re-run its CI, or publish by hand"
+            exit 1
+          fi
+          [ "$(cat firmware/keystore)" = atecc ] || skip "PR #$pr's build uses the $(cat firmware/keystore) keystore; prod takes only ATECC builds"
+          echo "version=$(jq -r .version firmware/version.json)" >> "$GITHUB_OUTPUT"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+      - if: steps.find.outputs.publish == 'true'
+        run: pip install --quiet "esptool==${ESPTOOL_VERSION}"
+      - if: steps.find.outputs.publish == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PROD_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Sign and publish
+        if: steps.find.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.find.outputs.version }}
+        run: embedded/esp32s3/tools/ci-publish.sh prod firmware/tinycrypt-unsigned.bin "$VERSION"
+      - name: Record deployment
+        if: steps.find.outputs.publish == 'true'
+        uses: nakomis/nakomis-infra/.github/actions/record-deployment@main
+        with:
+          project: tinycrypt
+          environment: prod
+          version-file: firmware/version.json
+
   # The "Protect main" ruleset requires a check with exactly this name.
   infra:
     name: Infra (CDK)
@@ -134,14 +344,14 @@ jobs:
   ci-status:
     name: CI Status
     if: always()
-    needs: [mac-sim, esp32s3, watch-app, infra, lint]
+    needs: [changes, mac-sim, esp32s3, watch-app, infra, lint, firmware-version, firmware-build, firmware-sandbox, firmware-prod]
     runs-on: ubuntu-latest
     steps:
       - name: All jobs passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          echo 'mac-sim=${{ needs.mac-sim.result }} esp32s3=${{ needs.esp32s3.result }} watch-app=${{ needs.watch-app.result }} infra=${{ needs.infra.result }} lint=${{ needs.lint.result }}'
-          test '${{ needs.mac-sim.result }}' = success
-          test '${{ needs.esp32s3.result }}' = success
-          test '${{ needs.watch-app.result }}' = success
-          test '${{ needs.infra.result }}' = success
-          test '${{ needs.lint.result }}' = success
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key)=\(.value.result)"'
+          # Every job passed; the firmware ones may also be skipped (no firmware change, or main).
+          echo "$RESULTS" | jq -e 'to_entries | all(.value.result == "success"
+            or (.value.result == "skipped" and (.key | startswith("firmware-"))))' > /dev/null

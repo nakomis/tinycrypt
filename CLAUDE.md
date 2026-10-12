@@ -186,10 +186,23 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   every update) is refused, and an already-signed image needs no Keychain read. The private key never
   goes on a command line: the Keychain item is added through `security -i` (stdin), ACL
   `-T /usr/bin/security` (explicit default; `-T ""` would prompt on every read and block unattended builds).
-- **Publishing**: bump `esp32s3/version.txt`, commit, `esp32s3/publish-ota.sh x.y.z` (clean tree, new
-  version only, no per-key strings in the image) uploads `nakomis-firmware-{env}/tinycrypt/x.y.z/firmware.bin`
-  with `signed=true` and its sha256; then update from Fleet's UI. The Thing's attributes
-  (`capabilities=ota,ota-signed,ota-approval`) make Fleet refuse unsigned builds and expect approval.
+- **Publishing is CI's** (CRYPT-20, `.github/workflows/ci.yml`, the `firmware-*` jobs). A PR that touches
+  `embedded/` gets the next version from the shared deployment tracker (`nakomis-infra`'s
+  `compute-version`, project `tinycrypt`, bumped from sandbox's latest; `--bump-minor` or `--bump-major`
+  alone on a line of the PR description), is built **once, unsigned** (in `FIRMWARE_KEYSTORE`'s keystore),
+  then signed with the sandbox key and published to sandbox (`tools/ci-publish.sh`), and recorded. Every push
+  to a PR is a new version. **The merge** publishes the same unsigned bytes, signed with the prod key, to
+  prod: the job finds the PR's last successful run, and refuses unless main's tree is the one that build
+  came from (if main moved on, re-run the PR's CI). **Prod takes only ATECC builds**, so while
+  `FIRMWARE_KEYSTORE` is `soft` a merge publishes nothing to prod. The signing keys come from SSM through
+  `TinycryptGithubCiStack`'s roles (`nakomis-tinycrypt-github-ci-{env}`, repo variables
+  `AWS_{SANDBOX,PROD}_ROLE_ARN`): sandbox trusts any ref of this repo, prod only `main` (only Martin merges).
+  RSA-PSS signatures are salted, so a re-run compares the `unsigned-sha256` metadata. `version.txt` only
+  seeds the tracker and labels local builds. **By hand**, only when CI can't: bump `version.txt` above the
+  tracker, commit, `esp32s3/publish-ota.sh x.y.z`. Both paths run `tools/image-checks.sh` (version,
+  configuration, no per-key strings, signature against the committed public key). Then update from Fleet's
+  UI. The Thing's attributes (`capabilities=ota,ota-signed,ota-approval`) make Fleet refuse unsigned builds
+  and expect approval.
 - **Push content is device-supplied**: the key writes the alert text, which goes to APNs verbatim.
   Fine while keys are ours; the push carries no authority anyway (approval needs the signed BLE challenge).
 - **Stale prompts**: an IoT SNS action can't set message attributes, so there's no
