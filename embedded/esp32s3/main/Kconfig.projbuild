@@ -49,6 +49,14 @@ config TINYCRYPT_METRICS_INTERVAL_S
     range 15 3600
     default 60
 
+config TINYCRYPT_PROVISIONER
+    bool "Build the provisioner instead of the key (configures and locks the ATECC608B)"
+    default n
+    help
+        A separate image (build.sh provisioner) that writes tinycrypt's configuration to a blank
+        ATECC608B and locks it, after a typed confirmation, then prints the chip's public keys
+        and the IoT key's CSR for infra/scripts/provision-key.sh. Locking is permanent.
+
 config TINYCRYPT_OTA_FAIL_SELFTEST
     bool "TEST ONLY: fail the post-update self-test, to check rollback"
     default n

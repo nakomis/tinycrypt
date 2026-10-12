@@ -64,12 +64,24 @@ bool prov_load(prov_t *prov)
     ok &= get_fixed(h, "topic", prov->presence_topic, sizeof(prov->presence_topic));
     ok &= get_fixed(h, "apns", prov->apns_platform, sizeof(prov->apns_platform));
     prov->device_cert = get_alloc(h, "cert");
-    prov->device_key = get_alloc(h, "key");
     get_optional(h, "metrics_url", prov->metrics_url, sizeof(prov->metrics_url));
     get_optional(h, "metrics_user", prov->metrics_user, sizeof(prov->metrics_user));
     get_optional(h, "metrics_pass", prov->metrics_pass, sizeof(prov->metrics_pass));
+    // The IoT key lives in the secure element (CRYPT-22, se_tls.c). Keys provisioned before that
+    // have it here, in plain flash: the soft-key test build still uses it until the key is
+    // reprovisioned with provision-key.sh --csr; an ATECC build never does.
+    size_t key_len = 0;
+    if (nvs_get_str(h, "key", NULL, &key_len) == ESP_OK)
+    {
+#ifdef TINYCRYPT_INSECURE_SOFT_KEY
+        prov->device_key = get_alloc(h, "key");
+        ESP_LOGW(TAG, "IoT private key in prov (INSECURE): reprovision with provision-key.sh --csr");
+#else
+        ESP_LOGW(TAG, "ignoring the IoT private key in prov: the secure element's is used");
+#endif
+    }
     nvs_close(h);
-    if (!ok || prov->device_cert == NULL || prov->device_key == NULL)
+    if (!ok || prov->device_cert == NULL)
     {
         free(prov->device_cert);
         free(prov->device_key);

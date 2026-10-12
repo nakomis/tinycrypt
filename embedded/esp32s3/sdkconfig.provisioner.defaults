@@ -1,0 +1,7 @@
+# The provisioner image (CRYPT-22, build.sh provisioner): no radio, no USB key, just the secure
+# element and the UART console.
+CONFIG_TINYCRYPT_PROVISIONER=y
+CONFIG_TINYCRYPT_NOTIFIER=n
+CONFIG_TINYCRYPT_WATCH_BLE=n
+CONFIG_TINYCRYPT_LED=n
+CONFIG_BT_ENABLED=n

@@ -14,6 +14,7 @@
 #include "ota.h"
 #include "presence.h"
 #include "prov.h"
+#include "se_tls.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -252,6 +253,15 @@ bool notifier_start(void)
     esp_sntp_config_t sntp = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
     TRY(esp_netif_sntp_init(&sntp));
 
+    // The TLS client key: the secure element's (a PEM that signs on the element), unless this
+    // soft-key key still has a pre-CRYPT-22 one in prov.
+    char *client_key = prov.device_key ? prov.device_key : se_tls_key_pem();
+    if (client_key == NULL)
+    {
+        ESP_LOGE(TAG, "no TLS client key from the secure element; notifier off");
+        return radio_on;
+    }
+
     static char uri[sizeof(prov.iot_endpoint) + 16];
     snprintf(uri, sizeof(uri), "mqtts://%s:8883", prov.iot_endpoint);
     const esp_mqtt_client_config_t config = {
@@ -261,7 +271,7 @@ bool notifier_start(void)
         },
         .credentials = {
             .client_id = prov.thing_name,
-            .authentication = {.certificate = prov.device_cert, .key = prov.device_key},
+            .authentication = {.certificate = prov.device_cert, .key = client_key},
         },
         .session.keepalive = 60,
         .network.reconnect_timeout_ms = 5000,

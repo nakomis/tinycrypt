@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
 # CRYPT-15: give a key its IoT certificate and the settings its firmware needs. Safe to re-run.
 #
-#   infra/scripts/provision-key.sh [key-name] [--new]       (default key-1)
+#   infra/scripts/provision-key.sh [key-name] --csr FILE     the key's own key (CRYPT-22)
+#   infra/scripts/provision-key.sh [key-name] [--new]        legacy: a key made here (INSECURE)
 #
-# Each run makes sure the key's certificate is active and attached to its Thing and the policy.
-# --new retires the Thing's existing certificates (detach, deactivate, delete) and makes a fresh one;
-# use it if a key's private key may have leaked.
+# --csr: the IoT private key lives in the key's secure element (ATECC608B slot 0, or the soft
+# stand-in), and only its CSR comes here (esp32s3/tools/atecc_provision.py PORT csr THING FILE). IoT
+# Core issues the certificate from it (create-certificate-from-csr); the Thing's other certificates
+# are retired, since the key they belong to is no longer used. No private key is written anywhere.
+#
+# Without --csr (the old way, until a key is reprovisioned): each run makes sure the key's
+# certificate is active and attached to its Thing and the policy. --new retires the Thing's existing
+# certificates (detach, deactivate, delete) and makes a fresh one; use it if a key's private key may
+# have leaked. INSECURE, TEST ONLY: that private key is made here and flashed in plain text.
 #
 # Writes, never committed, under embedded/esp32s3/certs/<thing>/:
-#   device.pem.crt, device.pem.key, certificate-arn
+#   device.pem.crt, certificate-arn (and device.pem.key without --csr)
 #   prov.bin   the key's prov partition (CRYPT-14): Wi-Fi, IoT endpoint, Thing name, topic, APNs
-#              platform, certificate and private key. flash-manual.sh writes it alongside the app;
-#              none of it is in the firmware image, so every key runs the same (published) image.
+#              platform and certificate (and the private key without --csr). flash-manual.sh writes
+#              it alongside the app; none of it is in the firmware image, so every key runs the same
+#              (published) image.
 #
-# INSECURE, TEST ONLY: the private key is made here and flashed in plain text, and the Wi-Fi password
-# sits in prov.bin and the key's flash. The real key keeps its private key on the ATECC608 and only
-# ever sends AWS a CSR.
+# The Wi-Fi password sits in prov.bin and the key's flash either way.
 #
 # Metrics (CRYPT-28): the key sends its health to the house VictoriaMetrics through vmauth on Cal
 # (HOME-437). METRICS_URL (default http://172.29.0.33:8427; "none" for no metrics). vmauth has a user
@@ -33,13 +39,20 @@ umask 077
 
 key=key-1
 new=false
-for arg in "$@"; do
-    case "$arg" in
+csr=""
+while [ $# -gt 0 ]; do
+    case "$1" in
         --new) new=true ;;
-        -*) echo "unknown option: $arg" >&2; exit 2 ;;
-        *) key=$arg ;;
+        --csr) csr=${2:?--csr needs a file}; shift ;;
+        -*) echo "unknown option: $1" >&2; exit 2 ;;
+        *) key=$1 ;;
     esac
+    shift
 done
+if [ -n "$csr" ]; then
+    [ -s "$csr" ] || { echo "no CSR at $csr" >&2; exit 1; }
+    csr=$(cd "$(dirname "$csr")" && pwd)/$(basename "$csr")
+fi
 env=${NPM_ENVIRONMENT:-sandbox}
 export AWS_PROFILE=${AWS_PROFILE:-nakom.is-sandbox}
 export AWS_REGION=${AWS_REGION:-eu-west-2}
@@ -65,14 +78,26 @@ retire() {
     echo "retired certificate ${id}"
 }
 
-if $new; then
+if $new || [ -n "$csr" ]; then
     for arn in $(aws iot list-thing-principals --thing-name "$thing" --query 'principals' --output text); do
         retire "$arn"
     done
     rm -f "${dir}/device.pem.crt" "${dir}/device.pem.key" "${dir}/certificate-arn"
 fi
 
-if [ ! -s "${dir}/device.pem.key" ] || [ ! -s "${dir}/certificate-arn" ]; then
+if [ -n "$csr" ]; then
+    aws iot create-certificate-from-csr --set-as-active --certificate-signing-request "file://${csr}" \
+        --query '[certificateArn,certificatePem]' --output json > "${dir}/from-csr.json"
+    python3 - "$dir" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+arn, pem = json.load(open(os.path.join(d, "from-csr.json")))
+open(os.path.join(d, "device.pem.crt"), "w").write(pem)
+open(os.path.join(d, "certificate-arn"), "w").write(arn + "\n")
+PY
+    rm -f "${dir}/from-csr.json"
+    echo "new certificate $(cut -d/ -f2 < "${dir}/certificate-arn") for ${thing}, from its own key's CSR"
+elif [ ! -s "${dir}/device.pem.key" ] || [ ! -s "${dir}/certificate-arn" ]; then
     aws iot create-keys-and-certificate --set-as-active \
         --certificate-pem-outfile "${dir}/device.pem.crt" \
         --private-key-outfile "${dir}/device.pem.key" \
@@ -124,7 +149,6 @@ rows = [
     ("topic", "data", "string", f"tinycrypt/{env}/presence/{thing}/request"),
     ("apns", "data", "string", platform),
     ("cert", "file", "string", os.path.join(d, "device.pem.crt")),
-    ("key", "file", "string", os.path.join(d, "device.pem.key")),
 ]
 # Metrics (CRYPT-28), sizes as prov.h's.
 if os.environ["TC_METRICS_URL"]:
@@ -133,6 +157,9 @@ if os.environ["TC_METRICS_URL"]:
         sys.exit("metrics URL, user or password too long for prov (127 / 32 / 64 bytes)")
     rows += [("metrics_url", "data", "string", url), ("metrics_user", "data", "string", user),
              ("metrics_pass", "data", "string", pw)]
+# Only a key provisioned the old way has its private key here (CRYPT-22).
+if os.path.exists(os.path.join(d, "device.pem.key")):
+    rows.append(("key", "file", "string", os.path.join(d, "device.pem.key")))
 with open(os.path.join(d, "prov.csv"), "w", newline="", encoding="utf-8") as f:
     w = csv.writer(f)
     w.writerow(("key", "type", "encoding", "value"))
