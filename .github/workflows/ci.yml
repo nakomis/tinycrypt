@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       firmware: ${{ steps.filter.outputs.firmware }}
+      watch: ${{ steps.filter.outputs.watch }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -32,6 +33,10 @@ jobs:
           filters: |
             firmware:
               - 'embedded/**'
+              - '.github/workflows/ci.yml'
+            watch:
+              - 'watch/TinycryptWatch/**'
+              - 'watch/ci/**'
               - '.github/workflows/ci.yml'
 
   mac-sim:
@@ -90,6 +95,115 @@ jobs:
           xcodegen generate
           xcodebuild -project TinycryptWatch.xcodeproj -scheme TinycryptWatch \
             -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
+
+  # ── Watch app to TestFlight (CRYPT-27) ───────────────────────────────────────────────────────
+  # A PR that touches the watch app: the next version from the deployment tracker (project
+  # tinycrypt-watch), archived and signed with CI's own Apple Distribution certificate and App
+  # Store profiles, then uploaded to TestFlight. Distribution-signed, so the app gets prod APNs
+  # pushes (the profile says aps-environment production). Nothing happens on merge: promoting a
+  # TestFlight build is done in App Store Connect.
+  watch-testflight:
+    name: Watch app to TestFlight
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.watch == 'true'
+    runs-on: macos-26
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_SANDBOX_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Seed the version
+        run: |
+          printf '{"version": "0.1.0"}\n' > watch-version.json
+      - name: Compute version
+        id: version
+        uses: nakomis/nakomis-infra/.github/actions/compute-version@main
+        env:
+          COMMIT_MESSAGE: |
+            ${{ github.event.pull_request.title }}
+            ${{ github.event.pull_request.body }}
+        with:
+          project: tinycrypt-watch
+          environment: sandbox
+          version-file: watch-version.json
+      - name: Signing keychain, certificate and profiles
+        run: |
+          umask 077
+          d="$RUNNER_TEMP/signing"; mkdir -p "$d"
+          param() { aws ssm get-parameter --name "/tinycrypt/sandbox/apple/$1" --with-decryption --output json \
+                    | python3 -c "import json,sys; sys.stdout.write(json.load(sys.stdin)['Parameter']['Value'])"; }
+          param asc-key > "$d/asc.p8"
+          param dist-key > "$d/dist.key"
+          ASC_KEY_PATH="$d/asc.p8"
+          ASC_KEY_ID=$(param asc-key-id)
+          ASC_ISSUER_ID=$(param asc-issuer-id)
+          export ASC_KEY_PATH ASC_KEY_ID ASC_ISSUER_ID
+          printf 'ASC_KEY_PATH=%s\nASC_KEY_ID=%s\nASC_ISSUER_ID=%s\n' "$ASC_KEY_PATH" "$ASC_KEY_ID" "$ASC_ISSUER_ID" >> "$GITHUB_ENV"
+          python3 -m venv "$d/venv" && "$d/venv/bin/pip" install --quiet cryptography
+          "$d/venv/bin/python" watch/ci/asc.py cert "$d/dist.key" "$d/dist.cer"
+          profiles="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+          for name in "tinycrypt CI iOS stub App Store" "tinycrypt CI watch App Store"; do
+            "$d/venv/bin/python" watch/ci/asc.py profile "$name" "$d/p.mobileprovision"
+            uuid=$(security cms -D -i "$d/p.mobileprovision" | plutil -extract UUID raw -)
+            cp "$d/p.mobileprovision" "$profiles/$uuid.mobileprovision"
+            cp "$d/p.mobileprovision" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/$uuid.mobileprovision"
+          done
+          # A throwaway keychain holding only the distribution identity, unlocked for codesign.
+          pass=$(openssl rand -hex 24)
+          openssl x509 -inform der -in "$d/dist.cer" -out "$d/dist.pem"
+          # 3DES/SHA-1: macOS's security import can't read OpenSSL 3's default (AES, PBKDF2) PKCS#12.
+          openssl pkcs12 -export -inkey "$d/dist.key" -in "$d/dist.pem" -passout "pass:$pass" \
+            -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1 -out "$d/dist.p12"
+          rm -f "$d/dist.key"
+          kc="$RUNNER_TEMP/ci.keychain-db"
+          security create-keychain -p "$pass" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$pass" "$kc"
+          security import "$d/dist.p12" -k "$kc" -P "$pass" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -k "$pass" "$kc" > /dev/null
+          # The existing search list, unquoted on purpose: one keychain path per word.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          rm -f "$d/dist.p12"
+          security find-identity -v -p codesigning "$kc"
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Archive
+        working-directory: watch/TinycryptWatch
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ github.run_number }}.${{ github.run_attempt }}
+        run: |
+          xcodegen generate
+          # Distribution builds get pushes from production APNs (the profile allows only that).
+          plutil -replace aps-environment -string production Resources/TinycryptWatch.entitlements
+          xcodebuild -project TinycryptWatch.xcodeproj -scheme TinycryptWatch -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/TinycryptWatch.xcarchive" \
+            -xcconfig ../ci/ci-signing.xcconfig \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" archive
+      - name: Upload to TestFlight
+        run: |
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/TinycryptWatch.xcarchive" \
+            -exportOptionsPlist watch/ci/ExportOptions.plist -exportPath "$RUNNER_TEMP/export" \
+            -authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          echo "::notice::TinycryptWatch ${{ steps.version.outputs.version }} (${{ github.run_number }}.${{ github.run_attempt }}) uploaded to TestFlight"
+      - name: Record deployment
+        uses: nakomis/nakomis-infra/.github/actions/record-deployment@main
+        with:
+          project: tinycrypt-watch
+          environment: sandbox
+          version-file: watch-version.json
+      - name: Remove the signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/ci.keychain-db" 2> /dev/null || true
+          rm -rf "$RUNNER_TEMP/signing"
 
   esp32s3:
     name: ESP32-S3 firmware
@@ -344,7 +458,7 @@ jobs:
   ci-status:
     name: CI Status
     if: always()
-    needs: [changes, mac-sim, esp32s3, watch-app, infra, lint, firmware-version, firmware-build, firmware-sandbox, firmware-prod]
+    needs: [changes, mac-sim, esp32s3, watch-app, watch-testflight, infra, lint, firmware-version, firmware-build, firmware-sandbox, firmware-prod]
     runs-on: ubuntu-latest
     steps:
       - name: All jobs passed
@@ -352,6 +466,6 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key)=\(.value.result)"'
-          # Every job passed; the firmware ones may also be skipped (no firmware change, or main).
+          # Every job passed; the publishing ones may also be skipped (nothing of theirs changed, or main).
           echo "$RESULTS" | jq -e 'to_entries | all(.value.result == "success"
-            or (.value.result == "skipped" and (.key | startswith("firmware-"))))' > /dev/null
+            or (.value.result == "skipped" and (.key | test("^(firmware-|watch-testflight)"))))' > /dev/null
