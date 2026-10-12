@@ -93,7 +93,9 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   sign only, GenKey yes, PrivWrite no (0 IoT, 1 attestation, 2–7 spare for per-site keys later); 9 the
   master secret (never readable, Write never, DeriveKey Roll without MAC, ReqRandom); the rest inert;
   sign counter = Counter[1]. **Provisioning** is a separate image (`build.sh provisioner`,
-  `flash-manual.sh --provisioner`, then `esp32s3/tools/atecc_provision.py PORT info|lock|csr`):
+  `flash-manual.sh --provisioner`, then `esp32s3/tools/atecc_provision.py PORT info|lock|csr`; its console is
+  the native USB-Serial-JTAG port, so `ESPTOOL_BEFORE=default_reset` flashes it, and the key image after it,
+  with no BOOT+RST):
   `lock` asks for the chip's serial to be typed, writes the configuration, checks it read back, locks it
   by CRC, writes the master secret from the chip's RNG, locks data, GenKeys 0 and 1; `csr` gives the IoT
   CSR for `provision-key.sh key-N --csr FILE` (create-certificate-from-csr; no private key anywhere).

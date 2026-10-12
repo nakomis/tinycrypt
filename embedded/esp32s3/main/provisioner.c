@@ -1,5 +1,7 @@
 // The provisioner (CRYPT-22, CONFIG_TINYCRYPT_PROVISIONER): a separate image that prepares the
-// secure element, driven over the UART console by esp32s3/tools/atecc_provision.py.
+// secure element, driven over the console by esp32s3/tools/atecc_provision.py. The console is the
+// native USB port (USB-Serial-JTAG, sdkconfig.provisioner.defaults): it's the only port the key's
+// PCB has, and flashing over it needs no BOOT+RST. A UART console build still works.
 //
 // Commands, one per line; every answer is one line, "TCPROV " and a JSON object:
 //   info              the chip: serial, revision, lock states, whether its configuration is ours
@@ -23,6 +25,8 @@
 #include "bootloader_random.h"
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
+#include "driver/usb_serial_jtag.h"
+#include "driver/usb_serial_jtag_vfs.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "nvs_flash.h"
@@ -231,8 +235,15 @@ void app_main(void)
     bootloader_random_enable();
     // The soft element lives in NVS; never erase it to get past an error.
     ESP_ERROR_CHECK(nvs_flash_init());
+    // Blocking reads on stdin need the console's driver, not the boot-time polling one.
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+    usb_serial_jtag_driver_config_t usj = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usj));
+    usb_serial_jtag_vfs_use_driver();
+#else
     ESP_ERROR_CHECK(uart_driver_install(CONFIG_ESP_CONSOLE_UART_NUM, 256, 0, 0, NULL, 0));
     uart_vfs_dev_use_driver(CONFIG_ESP_CONSOLE_UART_NUM);
+#endif
     setvbuf(stdin, NULL, _IONBF, 0);
 
 #ifdef TINYCRYPT_KEYSTORE_ATECC

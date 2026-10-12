@@ -90,16 +90,17 @@ The key enumerates on the S3's **native** USB port (not the UART one) as
 GPIO21 (the PCB's pins; change them under esp-cryptoauthlib in `esp32s3/build.sh menuconfig`). The
 breakouts have their own pull-ups. A blank chip answers at 0xC0 (8-bit); the M5Stack Trust&GO unit
 (0x6A) is factory-locked and can't take tinycrypt's configuration. Locking is permanent: do a
-sacrificial chip first.
+sacrificial chip first. The provisioner's console is the **native** USB port (USB-Serial-JTAG), so
+connect that one; flashing it and the key image straight after needs no BOOT+RST.
 
 ```bash
 KEYSTORE=atecc esp32s3/build.sh provisioner                 # the provisioner image
-esp32s3/flash-manual.sh --provisioner /dev/cu.usbmodemXXXX  # BOOT+RST first
+ESPTOOL_BEFORE=default_reset esp32s3/flash-manual.sh --provisioner /dev/cu.usbmodemXXXX  # else BOOT+RST first
 esp32s3/tools/atecc_provision.py /dev/cu.usbmodemXXXX info
 esp32s3/tools/atecc_provision.py /dev/cu.usbmodemXXXX lock  # PERMANENT; asks for the serial
 esp32s3/tools/atecc_provision.py /dev/cu.usbmodemXXXX csr tinycrypt-sandbox-key-1 /tmp/key-1.csr
 infra/scripts/provision-key.sh key-1 --csr /tmp/key-1.csr   # certificate from the chip's own key
-KEYSTORE=atecc esp32s3/build.sh && esp32s3/flash-manual.sh /dev/cu.usbmodemXXXX   # the key again
+KEYSTORE=atecc esp32s3/build.sh && ESPTOOL_BEFORE=default_reset esp32s3/flash-manual.sh /dev/cu.usbmodemXXXX   # the key again
 ```
 
 The same steps with the default soft keystore move a key's IoT private key out of `prov` into its

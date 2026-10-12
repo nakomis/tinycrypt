@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Drive the provisioner image (CRYPT-22, main/provisioner.c) over the UART port.
+"""Drive the provisioner image (CRYPT-22, main/provisioner.c) over its console, the
+native USB port (USB-Serial-JTAG).
 
     atecc_provision.py PORT info
     atecc_provision.py PORT lock            configure and lock the chip: PERMANENT, asks first
     atecc_provision.py PORT csr THING FILE  write the IoT key's CSR (PEM) for provision-key.sh --csr
 
 Flash the provisioner first: KEYSTORE=atecc esp32s3/build.sh provisioner, then
-esp32s3/flash-manual.sh --provisioner PORT (after BOOT+RST). Run with ESP-IDF's Python (pyserial).
+esp32s3/flash-manual.sh --provisioner PORT (no BOOT+RST needed over the native port). Run with ESP-IDF's Python (pyserial).
 """
 
 import base64
@@ -34,6 +35,18 @@ def command(port, line, timeout=20.0):
         elif raw:
             print(f"  | {raw}", file=sys.stderr)
     sys.exit(f"no answer to {line!r}: is the provisioner running on {port.port}?")
+
+
+def wait_for_boot(port, quiet=2.0):
+    # macOS raises DTR on open anyway, which resets the chip over USB-Serial-JTAG: let it boot
+    # (until "ready", or the line stays quiet) before sending a command it would miss.
+    deadline = time.monotonic() + quiet
+    while time.monotonic() < deadline:
+        raw = port.readline().decode(errors="replace").strip()
+        if raw.startswith(PREFIX) and "ready" in raw:
+            return
+        if raw:
+            deadline = time.monotonic() + quiet
 
 
 def show(info):
@@ -76,7 +89,12 @@ def csr(port, thing, path):
 def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
-    port = serial.Serial(sys.argv[1], 115200, timeout=1)
+    # Opening the port must not reset the chip (DTR/RTS drive EN and BOOT over USB-Serial-JTAG).
+    port = serial.Serial(None, 115200, timeout=1)
+    port.port = sys.argv[1]
+    port.dtr = port.rts = False
+    port.open()
+    wait_for_boot(port)
     cmd = sys.argv[2]
     if cmd == "info":
         show(command(port, "info"))
