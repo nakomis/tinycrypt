@@ -156,7 +156,9 @@ jobs:
           # A throwaway keychain holding only the distribution identity, unlocked for codesign.
           pass=$(openssl rand -hex 24)
           openssl x509 -inform der -in "$d/dist.cer" -out "$d/dist.pem"
-          openssl pkcs12 -export -inkey "$d/dist.key" -in "$d/dist.pem" -passout "pass:$pass" -out "$d/dist.p12"
+          # 3DES/SHA-1: macOS's security import can't read OpenSSL 3's default (AES, PBKDF2) PKCS#12.
+          openssl pkcs12 -export -inkey "$d/dist.key" -in "$d/dist.pem" -passout "pass:$pass" \
+            -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1 -out "$d/dist.p12"
           rm -f "$d/dist.key"
           kc="$RUNNER_TEMP/ci.keychain-db"
           security create-keychain -p "$pass" "$kc"
