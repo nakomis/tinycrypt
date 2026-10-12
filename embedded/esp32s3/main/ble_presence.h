@@ -36,6 +36,10 @@ void ble_presence_open_enrol(uint32_t seconds);
 
 bool ble_presence_enrolled(void);
 
+// Connections from a central since boot (CRYPT-28's metrics: a link only lasts seconds, so a count
+// says more than a sample).
+uint32_t ble_presence_connections(void);
+
 // CRYPT-14: stops NimBLE and the controller to free their RAM while an update downloads (a second
 // TLS session needs a contiguous ~17 KB record buffer, on a module with no PSRAM). The button keeps
 // working; the watch can't approve until ble_presence_resume(). Returns 1 if BLE was running and

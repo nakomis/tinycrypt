@@ -374,6 +374,7 @@ static const struct ble_gatt_svc_def services[] = {
 #define NO_CONN 0xffff
 static esp_timer_handle_t slot_timer[SLOTS];
 static uint16_t slot_conn[SLOTS] = {[0 ... SLOTS - 1] = NO_CONN};
+static volatile uint32_t connections;
 
 static void drop_connection(void *arg)
 {
@@ -384,6 +385,7 @@ static void drop_connection(void *arg)
 
 static void connection_opened(uint16_t handle)
 {
+    connections++;
     for (uintptr_t i = 0; i < SLOTS; i++)
     {
         if (slot_conn[i] != NO_CONN)
@@ -620,4 +622,9 @@ bool ble_presence_start(void)
     if (have_watch && !have_peer)
         ESP_LOGW(TAG, "watch enrolled before bonding existed: hold BOOT 5 s and enrol it again");
     return true;
+}
+
+uint32_t ble_presence_connections(void)
+{
+    return connections;
 }

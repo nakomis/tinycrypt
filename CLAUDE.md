@@ -215,6 +215,17 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   profiles expire **12 Oct 2027**. A TestFlight build is distribution-signed (`aps-environment` production),
   so it gets **prod** APNs pushes: register its token with `sns-platform.sh` in prod, not sandbox; Xcode
   development builds stay on the APNs sandbox. App Store Connect app id 6821087095.
+- **Metrics** (CRYPT-28, `esp32s3/main/metrics.c`, `CONFIG_TINYCRYPT_METRICS`): every 60 s the key POSTs one
+  InfluxDB line (`port/metrics_line.c`) to vmauth on Cal (HOME-437, `http://172.29.0.33:8427/write`, plain
+  HTTP + basic auth, no TLS on the LAN), landing in the house VictoriaMetrics as `tinycrypt_heap_free`,
+  `_heap_largest`, `_heap_min`, `_uptime_s`, `_rssi`, `_mqtt`, `_watch_enrolled`, `_ble_connections` (label
+  `version`). **Nothing about sign-ins is sent.** vmauth has a user per device named after the Thing, password
+  in prod SSM `/vmauth/device-<thing>-password`, and pins `host_name` server-side, so the password (in plain
+  flash, `prov`'s `metrics_*`, written by `provision-key.sh`; `METRICS_URL=none` for none) can only write as
+  that key. A new key needs its user in home-servers' `vmauth_devices` first. Best effort: a minute is skipped
+  while Wi-Fi is down, an update runs, or the largest free block is under 8 KB; failures are dropped. Query
+  it read-only with `ssh cal.local "docker exec victoriametrics wget -qO- 'http://127.0.0.1:8428/api/v1/query?query=…'"`.
+  Measured on key-1 at boot with BLE and MQTT up: 66.8 KB free, largest block 31.7 KB.
 - **Push content is device-supplied**: the key writes the alert text, which goes to APNs verbatim.
   Fine while keys are ours; the push carries no authority anyway (approval needs the signed BLE challenge).
 - **Stale prompts**: an IoT SNS action can't set message attributes, so there's no

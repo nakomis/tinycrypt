@@ -31,6 +31,10 @@ add_executable(tinycrypt-sigcheck sim/sigcheck_main.c)
 target_link_libraries(tinycrypt-sigcheck PRIVATE tinycrypt_port)
 target_compile_options(tinycrypt-sigcheck PRIVATE -Wall -Wextra -Werror)
 
+add_executable(tinycrypt-metricsline sim/metricsline_main.c)
+target_link_libraries(tinycrypt-metricsline PRIVATE tinycrypt_port)
+target_compile_options(tinycrypt-metricsline PRIVATE -Wall -Wextra -Werror)
+
 add_executable(tinycrypt-otacmd sim/otacmd_main.c)
 target_link_libraries(tinycrypt-otacmd PRIVATE tinycrypt_port)
 target_compile_options(tinycrypt-otacmd PRIVATE -Wall -Wextra -Werror)
