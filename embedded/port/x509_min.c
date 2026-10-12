@@ -228,3 +228,14 @@ int x509_csr(const char *cn, uint8_t *out, size_t cap)
     sign_and_close(&d, info, SE_SLOT_IOT);
     return d.err ? -1 : (int)d.len;
 }
+
+bool x509_cert_is_current(const uint8_t *cert, size_t len)
+{
+    uint8_t point[1 + SE_PUB_LEN] = {0x04};
+    if (se_pubkey(SE_SLOT_ATTEST, point + 1) != 0 || len < sizeof(point))
+        return false;
+    for (size_t i = 0; i + sizeof(point) <= len; i++)
+        if (memcmp(cert + i, point, sizeof(point)) == 0)
+            return true;
+    return false;
+}

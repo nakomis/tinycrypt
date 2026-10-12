@@ -102,7 +102,15 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   marker, and `CONFIG_MBEDTLS_ATCA_HW_ECDSA_SIGN` routes every mbedTLS ECDSA signature to our
   `mbedtls_ecdsa_sign`, which signs the marker on the element (slot 0) and refuses anything else (soft
   builds still sign a pre-CRYPT-22 prov key in software, so key-1 stays online until reprovisioned).
-  Every chip call holds one mutex (CTAP and MQTT tasks). A board whose ATECC has worked is marked in
+  Credential IDs are hashed before the HMAC (a relying party picks their length; the chip takes 228
+  bytes at most), and a credential's key is derived inside the sign call, never left loaded (U2F loads
+  before asking presence). A missing or corrupt authenticator state rolls the master too
+  (`crypto_tc_state_missing`): solo1 then starts with no PIN, so old credentials must not survive.
+  Still open until flash encryption: the PIN hash sits in plain NVS, so a flash dump can brute-force a
+  short PIN offline. The attestation certificate is checked against the element's key at boot and
+  remade after a change of chip or keystore. The provisioner locks slots 0 and 1 after GenKey
+  (a locked slot is how a rerun, and `se_init`, know the key is ours; it also stops any firmware
+  replacing them). Every chip call holds one mutex (CTAP and MQTT tasks). A board whose ATECC has worked is marked in
   NVS (`ks_atecc`) and refuses a soft-key image, so a wrong update rolls back. Without a working element
   there's no CTAP, but update approvals still run.
 - **Soft key is INSECURE, TEST ONLY**: gated behind `TINYCRYPT_INSECURE_SOFT_KEY`, loud boot

@@ -150,3 +150,45 @@ def test_iot_csr(tmp_path):
     assert raw(csr.public_key()) != raw(cert.public_key())
     again = x509.load_der_x509_csr(bytes.fromhex(run().stdout.strip().splitlines()[-1]))
     assert raw(again.public_key()) == raw(csr.public_key())
+
+
+def test_long_custom_credential_id_is_not_a_crash(sim):
+    # solo1 takes "custom" credential IDs of up to 255 bytes (wallet tag first) and can derive a
+    # key from the whole ID. A relying party chooses the ID, so the derivation hashes it rather
+    # than send it to the element whole (which takes 228 bytes at most, and aborts beyond). This
+    # sim build doesn't reach that derivation by this route (the earlier code didn't crash here
+    # either); it guards the route all the same.
+    ctap = Ctap2(sim.device())
+    for n in (24, 200, 211, 212, 255):
+        for up in (False, True):
+            cred = b"\x8c\x27\x90\xf6" + os.urandom(n - 4)
+            try:
+                ctap.get_assertion(RP.id, os.urandom(32), [{"type": "public-key", "id": cred}],
+                                   options={"up": up})
+            except CtapError:
+                pass
+    assert "FIDO_2_0" in Ctap2(sim.device()).get_info().versions  # still running
+    assert sim.proc.poll() is None
+
+
+def test_lost_state_takes_the_credentials_with_it(sim):
+    # solo1 starts a fresh state (no PIN) when its stored one is gone; old credentials must not
+    # carry over, or wiping the state would bypass the PIN.
+    server, auth_data = register(sim.device())
+    sim.stop()
+    (sim.state_dir / "authenticator_state.bin").unlink()
+    sim.start()
+    with pytest.raises(ClientError):
+        authenticate(sim.device(), server, [auth_data.credential_data])
+    register(sim.device())
+
+
+def test_attestation_certificate_follows_the_element(sim):
+    _, _, before = make_credential(sim)
+    sim.stop()
+    (sim.state_dir / "secure_element.bin").unlink()  # a new "chip"; the old certificate stays
+    sim.start()
+    _, _, after = make_credential(sim)
+    att = after.response.attestation_object
+    PackedAttestation().verify(att.att_stmt, att.auth_data, after.response.client_data.hash)
+    assert att.att_stmt["x5c"][0] != before.response.attestation_object.att_stmt["x5c"][0]

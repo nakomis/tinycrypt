@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include "ctap.h"
+#include "crypto_tc.h"
 #include "presence.h"
 #include "se_soft.h"
 #include "secure_element.h"
@@ -365,7 +366,7 @@ static void load_attestation_cert(void)
     if (f != NULL) {
         attest_cert_len = fread(attest_cert, 1, sizeof(attest_cert), f);
         fclose(f);
-        if (attest_cert_len > 0)
+        if (attest_cert_len > 0 && x509_cert_is_current(attest_cert, attest_cert_len))
             return;
     }
     int n = x509_attestation_cert((const uint8_t *)TINYCRYPT_AAGUID, attest_cert, sizeof(attest_cert));
@@ -389,9 +390,10 @@ uint16_t device_attestation_cert_der_get_size(void)
 
 int authenticator_read_state(AuthenticatorState *state)
 {
-    if (!read_file(state_path, state, sizeof(*state)))
-        return 0;
-    return state->is_initialized == INITIALIZED_MARKER;
+    if (read_file(state_path, state, sizeof(*state)) && state->is_initialized == INITIALIZED_MARKER)
+        return 1;
+    crypto_tc_state_missing();
+    return 0;
 }
 
 void authenticator_write_state(AuthenticatorState *state)

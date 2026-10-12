@@ -5,9 +5,10 @@
 #   infra/scripts/provision-key.sh [key-name] [--new]        legacy: a key made here (INSECURE)
 #
 # --csr: the IoT private key lives in the key's secure element (ATECC608B slot 0, or the soft
-# stand-in), and only its CSR comes here (esp32s3/tools/atecc_provision.py PORT csr THING FILE). IoT
-# Core issues the certificate from it (create-certificate-from-csr); the Thing's other certificates
-# are retired, since the key they belong to is no longer used. No private key is written anywhere.
+# stand-in), and only its CSR comes here (esp32s3/tools/atecc_provision.py PORT csr THING FILE). Its
+# CN must be the Thing and its signature must verify. IoT Core issues the certificate from it
+# (create-certificate-from-csr); then the Thing's other certificates are retired, since the key they
+# belong to is no longer used. No private key is written anywhere.
 #
 # Without --csr (the old way, until a key is reprovisioned): each run makes sure the key's
 # certificate is active and attached to its Thing and the policy. --new retires the Thing's existing
@@ -78,7 +79,7 @@ retire() {
     echo "retired certificate ${id}"
 }
 
-if $new || [ -n "$csr" ]; then
+if $new; then
     for arn in $(aws iot list-thing-principals --thing-name "$thing" --query 'principals' --output text); do
         retire "$arn"
     done
@@ -86,6 +87,10 @@ if $new || [ -n "$csr" ]; then
 fi
 
 if [ -n "$csr" ]; then
+    cn=$(openssl req -in "$csr" -noout -subject -nameopt multiline | awk -F' = ' '/commonName/ { print $2 }')
+    [ "$cn" = "$thing" ] || { echo "the CSR is for '${cn}', not ${thing}" >&2; exit 1; }
+    openssl req -in "$csr" -noout -verify 2> /dev/null || { echo "the CSR's signature doesn't verify" >&2; exit 1; }
+    old=$(aws iot list-thing-principals --thing-name "$thing" --query 'principals' --output text)
     aws iot create-certificate-from-csr --set-as-active --certificate-signing-request "file://${csr}" \
         --query '[certificateArn,certificatePem]' --output json > "${dir}/from-csr.json"
     python3 - "$dir" <<'PY'
@@ -95,8 +100,12 @@ arn, pem = json.load(open(os.path.join(d, "from-csr.json")))
 open(os.path.join(d, "device.pem.crt"), "w").write(pem)
 open(os.path.join(d, "certificate-arn"), "w").write(arn + "\n")
 PY
-    rm -f "${dir}/from-csr.json"
+    rm -f "${dir}/from-csr.json" "${dir}/device.pem.key"
     echo "new certificate $(cut -d/ -f2 < "${dir}/certificate-arn") for ${thing}, from its own key's CSR"
+    # Only now that the new one exists: the old certificates belong to a key that's no longer used.
+    for arn in $old; do
+        retire "$arn"
+    done
 elif [ ! -s "${dir}/device.pem.key" ] || [ ! -s "${dir}/certificate-arn" ]; then
     aws iot create-keys-and-certificate --set-as-active \
         --certificate-pem-outfile "${dir}/device.pem.crt" \

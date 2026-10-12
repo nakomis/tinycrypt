@@ -45,6 +45,7 @@
 #endif
 #include "led_status.h"
 #include "ota.h"
+#include "crypto_tc.h"
 #include "presence.h"
 #include "sdkconfig.h"
 #include "secure_element.h"
@@ -379,7 +380,10 @@ static size_t attest_cert_len;
 static bool load_attestation_cert(void)
 {
     size_t len = sizeof(attest_cert);
-    if (nvs_get_blob(nvs, "attest_cert", attest_cert, &len) == ESP_OK && len > 0)
+    // Reused only if it carries the element's current key: a new chip, or a move from the soft
+    // element to the ATECC, needs a new certificate.
+    if (nvs_get_blob(nvs, "attest_cert", attest_cert, &len) == ESP_OK && len > 0 &&
+        x509_cert_is_current(attest_cert, len))
     {
         attest_cert_len = len;
         return true;
@@ -437,9 +441,10 @@ uint16_t device_attestation_cert_der_get_size(void)
 
 int authenticator_read_state(AuthenticatorState *state)
 {
-    if (!nvs_read("state", state, sizeof(*state)))
-        return 0;
-    return state->is_initialized == INITIALIZED_MARKER;
+    if (nvs_read("state", state, sizeof(*state)) && state->is_initialized == INITIALIZED_MARKER)
+        return 1;
+    crypto_tc_state_missing();
+    return 0;
 }
 
 void authenticator_write_state(AuthenticatorState *state)
@@ -592,8 +597,10 @@ static void ctap_task(void *arg)
     // Here rather than app_main: two ECDSA verifies need more than the main task's 3.5 KB stack.
     se_selftest_run();
 #endif
-    // Without the secure element there are no credentials to use: don't answer CTAP, but keep
-    // running update approvals, so a fixed image can still be installed.
+    // Without the secure element there are no credentials to use: don't answer CTAP. Update
+    // approvals keep running, which only helps when the element works but the attestation
+    // certificate couldn't be made: without the element there's no IoT key, so no MQTT and no
+    // updates, and the fix is a wired flash.
     if (se_ok)
     {
         ctaphid_init();
@@ -666,7 +673,7 @@ void app_main(void)
         ESP_LOGI(TAG, "secure element: %s", se_backend());
     }
     else
-        ESP_LOGE(TAG, "secure element (%s) unavailable: no CTAP; updates still work", se_backend());
+        ESP_LOGE(TAG, "secure element (%s) unavailable: no CTAP", se_backend());
 
     led_status_start();
 #ifdef CONFIG_TINYCRYPT_NOTIFIER
