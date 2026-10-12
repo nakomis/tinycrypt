@@ -2,3 +2,7 @@ dependencies:
   idf: ">=5.5"
   espressif/esp_tinyusb: "^1.7.0"
   espressif/led_strip: "^3.0.0"
+  # The ATECC608B (CRYPT-22). Only its atcab_* API is used; its mbedTLS hooks stay off.
+  espressif/esp-cryptoauthlib: "^3.7.9"
+  # crypto_tc.c: Ed25519 credentials (solo_core depends on it too).
+  espressif/libsodium: "^1.0.20"
