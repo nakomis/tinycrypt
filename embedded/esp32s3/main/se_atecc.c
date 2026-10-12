@@ -67,6 +67,21 @@ static bool chip_present(void)
     (void)i2c_master_probe(bus, 0x00, 10);  // the wake pulse; nothing answers it
     esp_rom_delay_us(1500);
     esp_err_t rc = i2c_master_probe(bus, CONFIG_ATCA_I2C_ADDRESS >> 1, 50);
+    if (rc == ESP_OK) {
+        // Back to sleep (word address 0x01), so cryptoauthlib's own wake finds the chip as it
+        // expects: asleep, answering its wake with the 04 11 33 43 token.
+        i2c_device_config_t dev_cfg = {
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .device_address = CONFIG_ATCA_I2C_ADDRESS >> 1,
+            .scl_speed_hz = 100000,
+        };
+        i2c_master_dev_handle_t dev;
+        static const uint8_t sleep = 0x01;
+        if (i2c_master_bus_add_device(bus, &dev_cfg, &dev) == ESP_OK) {
+            (void)i2c_master_transmit(dev, &sleep, 1, 50);
+            i2c_master_bus_rm_device(dev);
+        }
+    }
     i2c_del_master_bus(bus);
     if (rc != ESP_OK)
         ESP_LOGE(TAG, "no ATECC608 answers at 0x%02x (8-bit): %s", CONFIG_ATCA_I2C_ADDRESS, esp_err_to_name(rc));
