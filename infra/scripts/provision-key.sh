@@ -106,7 +106,11 @@ PY
     for arn in $old; do
         retire "$arn"
     done
-elif [ ! -s "${dir}/device.pem.key" ] || [ ! -s "${dir}/certificate-arn" ]; then
+# A certificate already made (from a CSR, so no private key file here, or the old way) is kept:
+# a plain re-run only refreshes prov. Only a key with no certificate at all gets an AWS-made key
+# pair (INSECURE, the pre-CRYPT-22 way); never recreate one just because device.pem.key is absent,
+# or a re-run would quietly put an AWS-generated private key back into prov.
+elif [ ! -s "${dir}/certificate-arn" ]; then
     aws iot create-keys-and-certificate --set-as-active \
         --certificate-pem-outfile "${dir}/device.pem.crt" \
         --private-key-outfile "${dir}/device.pem.key" \
