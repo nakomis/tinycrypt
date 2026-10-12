@@ -10,7 +10,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from board import key_board as kb
+import importlib
+
 from board.fab import export_step, fab, write_bom, write_cpl
 from board.kicad_pcb import write_board
 from board.cleanup import prune
@@ -24,7 +25,8 @@ KICAD_CLI = "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli"
 # colour; this only makes the KiCad renders match the order.
 MASK, SILK = "Black", "White"
 LAYERS = 2
-BOARDS = {"key": "tinycrypt-key"}
+# board -> (module, file stem). "bare" is the bare-chip variant (CRYPT-24).
+BOARDS = {"key": ("board.key_board", "tinycrypt-key"), "bare": ("board.bare_board", "tinycrypt-bare")}
 
 
 def drc(board, out):
@@ -49,7 +51,8 @@ def main():
     ap.add_argument("--step", action="store_true",
                     help="also fetch the 3D models and write the STEP model and a 3D render")
     a = ap.parse_args()
-    stem = BOARDS[a.board]
+    module, stem = BOARDS[a.board]
+    kb = importlib.import_module(module)
     out = HERE / "out" / a.board
     tmp = out / "tmp"
     tmp.mkdir(parents=True, exist_ok=True)
@@ -69,11 +72,13 @@ def main():
         routed_tracks, routed = route(c, p, tmp, passes=a.passes, layers=LAYERS, route_area=kb.route_area(),
                                       fixed_vias=fixed, fixed_tracks=hand_tracks, via_keepouts=text_boxes,
                                       layer_keepouts=kb.layer_keepouts(), skip_nets=("GND",),
-                                      log="/tmp/claude-501/key-board-route.log")
+                                      log=f"/tmp/claude-501/{a.board}-board-route.log")
         tracks, vias = prune(c, p, tracks + routed_tracks, fixed + routed, keep=fixed)
         stitch = kb.stitch_vias(c, p, tracks, vias, avoid=text_boxes, avoid_at=kb.on_art)
         print(f"stitching: {len(stitch)} GND vias")
         vias += stitch
+    if hasattr(kb, "clearance_violations") and kb.clearance_violations(tracks, vias):
+        raise SystemExit(f"copper in the antenna clearance: {kb.clearance_violations(tracks, vias)}")
     if kb.vias_under_text(vias, text_boxes):
         raise SystemExit(f"vias under silk text: {kb.vias_under_text(vias, text_boxes)}")
     board = out / f"{stem}.kicad_pcb"

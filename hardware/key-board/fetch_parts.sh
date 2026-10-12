@@ -17,6 +17,18 @@ PARTS=(
   C1525     # C100N
   C52923    # C1U
   C19702    # C10U
+  # bare board (CRYPT-24)
+  C2913196  # S3FN8 (ESP32-S3FN8, QFN-56)
+  C706805   # XTAL (40 MHz, 2520)
+  C74301    # L24N (crystal series)
+  C18216    # L2N0 (VDD3P3 filter)
+  C97997    # L2N4 (RF pi series)
+  C1552     # C1P5 (RF pi shunt)
+  C1548     # C15P (crystal load)
+  C15195    # C10N (VDDA)
+  C2917718  # ANT (Johanson 2450AT18D0100E)
+  C965840   # RGB (XL-1615RGBC-RF)
+  C25076    # R100 (LED green/blue)
 )
 # easyeda.com's CloudFront returns 403 for easyeda2kicad's default User-Agent, so run it
 # through a one-line wrapper that sends a neutral UA instead.

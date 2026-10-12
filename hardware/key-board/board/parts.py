@@ -43,6 +43,21 @@ _TABLE = {
     "C100N": ("100nF", "C1525", "C0402", "CL05B104KO5NNNC", False, 0),
     "C1U": ("1uF", "C52923", "C0402", "CL05A105KA5NQNC", False, 0),
     "C10U": ("10uF", "C19702", "C0603", "CL10A106KP8NNNC", False, 0),
+    # Bare-chip board (CRYPT-24). The chip's footprint is a local copy of the LCSC one ("local/"):
+    # exposed pad shrunk to 3.4 mm for Espressif's two-layer power moat, thermal vias on pad 57.
+    # The antenna has no symbol: its pins are its pad numbers, because which pad is the feed
+    # depends on the side it is fed from (datasheet functions 1 and 2).
+    "S3FN8": ("ESP32-S3FN8", "C2913196", "local/QFN-56_ESP32-S3FN8_EP3.4", "ESP32-S3(FN8)", True, 0),
+    "XTAL": ("40MHz 10ppm", "C706805", "CRYSTAL-SMD_4P-L2.5-W2.0-BL", "8Z40000055", True, 0),
+    "L24N": ("24nH", "C74301", "L0402", "SDCL1005C24NJTDF", True, 0),
+    "L2N0": ("2.0nH", "C18216", "L0402", "LQG15HS2N0S02D", True, 0),
+    "L2N4": ("2.4nH", "C97997", "L0402", "LQG15HS2N4S02D", True, 0),
+    "C1P5": ("1.5pF", "C1552", "C0402", "0402CG1R5C500NT", True, 0),
+    "C15P": ("15pF", "C1548", "C0402", "0402CG150J500NT", False, 0),
+    "C10N": ("10nF", "C15195", "C0402", "CL05B103KB5NNNC", False, 0),
+    "ANT": ("2450AT18D0100E", "C2917718", "ANT-SMD_4P-L3.2-W1.6", None, True, 0),
+    "RGB": ("XL-1615RGBC-RF", "C965840", "LED-ARRAY-SMD_4P-L1.6-W1.5-BR_XL-1615RGBC-RF", "XL-1615RGBC-RF", True, 0),
+    "R100": ("100R", "C25076", "R0402", "0402WGF1000TCE", False, 0),
     "DEBUG": ("Debug pads", None, "DebugPads_1x5_P2.54", None, False, 0),
     "MH": ("M2 hole", None, "MountingHole_M2_2.2mm_Pad4.4", None, False, 0),
 }
@@ -79,7 +94,8 @@ MODEL_OFFSET = {"ESD": (0, 0, 0), "JST5": (-2.0, -0.33, 0),
 
 def _load(key, row):
     value, lcsc, fp_stem, sym, extended, rot = row
-    fp = load_footprint((LCSC_FP if lcsc else LOCAL_FP) / f"{fp_stem}.kicad_mod")
+    local = fp_stem.startswith("local/") or not lcsc
+    fp = load_footprint((LOCAL_FP if local else LCSC_FP) / f"{fp_stem.removeprefix('local/')}.kicad_mod")
     pins = {}
     if sym is None:     # footprint-only part: one passive pin per numbered pad, name = number
         pins = {p.number: [p.number] for p in fp.pads if p.number}

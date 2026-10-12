@@ -15,6 +15,10 @@ mkdir -p freerouting && cp <somewhere>/freerouting-2.5.0.jar freerouting/   # Ja
 .venv/bin/python -m pytest                             # includes one full route (about 15 s)
 ```
 
+`--board bare` builds the bare-chip variant (CRYPT-24, `DESIGN-bare.md`: the ESP32-S3FN8 with its
+own crystal, RF match and chip antenna instead of the module, so that every part is Economic-eligible
+at JLCPCB) into `out/bare/`. Untested; `DESIGN-bare.md` weighs whether it's worth it.
+
 `build.py` writes `out/key/`: `tinycrypt-key.kicad_pcb`, `drc.json`, `bom.csv`, `cpl.csv`,
 `tinycrypt-key-gerbers.zip`, the top and bottom renders, and `pins.h`. It writes the fab files only
 when KiCad's DRC has no errors and no unconnected items (kicad-cli exits 0 even when DRC fails).
