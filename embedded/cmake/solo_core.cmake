@@ -3,6 +3,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/solo_sources.cmake)
 
 add_library(solo_core STATIC ${SOLO_CORE_SOURCES})
 set_source_files_properties(${SOLO1}/fido2/ctaphid.c PROPERTIES COMPILE_DEFINITIONS "${SOLO_CTAPHID_DEFINES}")
+set_source_files_properties(${SOLO1}/fido2/crypto.c PROPERTIES COMPILE_DEFINITIONS "${SOLO_CRYPTO_DEFINES}")
 target_include_directories(solo_core PUBLIC ${SOLO_CORE_INCLUDES})
 target_compile_definitions(solo_core PUBLIC ${SOLO_CORE_DEFINES})
 # Upstream code: keep its warnings out of our build output.

@@ -1,4 +1,4 @@
-"""The INSECURE software key must never build in a release configuration."""
+"""The INSECURE software key must never build in a release configuration; exactly one keystore."""
 
 import subprocess
 from pathlib import Path
@@ -39,8 +39,18 @@ def test_header_refuses_soft_key_in_release():
 def test_header_refuses_build_without_a_keystore():
     result = compile_keystore_header()
     assert result.returncode != 0
-    assert "No secure keystore backend exists yet" in result.stderr
+    assert "No keystore chosen" in result.stderr
+
+
+def test_header_refuses_two_keystores():
+    result = compile_keystore_header("TINYCRYPT_INSECURE_SOFT_KEY", "TINYCRYPT_KEYSTORE_ATECC")
+    assert result.returncode != 0
+    assert "Choose one keystore" in result.stderr
 
 
 def test_header_accepts_soft_key_test_build():
     assert compile_keystore_header("TINYCRYPT_INSECURE_SOFT_KEY").returncode == 0
+
+
+def test_header_accepts_atecc_release_build():
+    assert compile_keystore_header("TINYCRYPT_KEYSTORE_ATECC", "TINYCRYPT_RELEASE").returncode == 0
