@@ -2,7 +2,8 @@
 //
 // Each UDP datagram is one 64-byte CTAPHID report. Replies go back to the
 // address of the most recent request, so a test client can bind any port.
-// State (master secret, sign counter, resident keys) lives in --state-dir.
+// State lives in --state-dir: the INSECURE software secure element (master secret, attestation and
+// IoT keys, sign counter; port/se_soft.c), its attestation certificate, and the resident keys.
 //
 // Port shape follows solo1's pc/ target (Apache-2.0 OR MIT).
 #include <arpa/inet.h>
@@ -25,6 +26,9 @@
 
 #include "ctap.h"
 #include "presence.h"
+#include "se_soft.h"
+#include "secure_element.h"
+#include "x509_min.h"
 #include "ctaphid.h"
 #include "device.h"
 #include "log.h"
@@ -52,7 +56,10 @@ static uint32_t external_cancel_ms = 0;
 static bool external_cancel_first = false;  // cancelled before the wait even starts
 static char state_path[1024];
 static char rk_path[1024];
-static char counter_path[1024];
+static char se_path[1024];
+static char cert_path[1024];
+static uint8_t attest_cert[X509_MIN_MAX];
+static size_t attest_cert_len;
 static CTAP_residentKey rk_store[RK_NUM];
 
 static void die(const char *what)
@@ -324,20 +331,60 @@ static bool read_file(const char *path, void *data, size_t len)
     return n == len;
 }
 
-// The default counter lives in RAM; persist it so the sign count never goes
-// backwards across restarts (relying parties treat that as a cloned key).
+int se_soft_store_load(void *buf, size_t len)
+{
+    return read_file(se_path, buf, len) ? 0 : -1;
+}
+
+int se_soft_store_save(const void *buf, size_t len)
+{
+    write_file(se_path, buf, len);
+    return 0;
+}
+
+bool se_soft_store_exists(void)
+{
+    return access(se_path, F_OK) == 0;
+}
+
+// The sign counter is the secure element's: it only goes up, across restarts too (relying
+// parties treat a counter that goes backwards as a cloned key).
 uint32_t ctap_atomic_count(uint32_t amount)
 {
-    static uint32_t counter = 0;
-    static bool loaded = false;
-    if (!loaded)
-    {
-        read_file(counter_path, &counter, sizeof(counter));
-        loaded = true;
+    uint32_t value = 0;
+    for (uint32_t i = 0; i <= amount; i++)
+        if (se_counter_increment(&value) != 0)
+            die("sign counter");
+    return value;
+}
+
+// The attestation certificate: made once, self-signed by the element's attestation key.
+static void load_attestation_cert(void)
+{
+    FILE *f = fopen(cert_path, "rb");
+    if (f != NULL) {
+        attest_cert_len = fread(attest_cert, 1, sizeof(attest_cert), f);
+        fclose(f);
+        if (attest_cert_len > 0)
+            return;
     }
-    counter += amount + 1;
-    write_file(counter_path, &counter, sizeof(counter));
-    return counter;
+    int n = x509_attestation_cert((const uint8_t *)TINYCRYPT_AAGUID, attest_cert, sizeof(attest_cert));
+    if (n < 0) {
+        fprintf(stderr, "could not make the attestation certificate\n");
+        exit(1);
+    }
+    attest_cert_len = (size_t)n;
+    write_file(cert_path, attest_cert, attest_cert_len);
+}
+
+void device_attestation_read_cert_der(uint8_t *dst)
+{
+    memmove(dst, attest_cert, attest_cert_len);
+}
+
+uint16_t device_attestation_cert_der_get_size(void)
+{
+    return (uint16_t)attest_cert_len;
 }
 
 int authenticator_read_state(AuthenticatorState *state)
@@ -420,7 +467,8 @@ static void usage(const char *argv0)
 {
     fprintf(stderr,
             "usage: %s [--port N] [--state-dir DIR] [--presence auto|deny|prompt|button+watch]\n"
-            "          [--watch-after MS] [--up-timeout MS] [--external-at MS [--external-cancel MS | --external-cancel-first]]\n",
+            "          [--watch-after MS] [--up-timeout MS] [--external-at MS [--external-cancel MS | --external-cancel-first]]\n"
+            "          [--print-csr CN]  (print the IoT key's CSR, as hex DER, and exit)\n",
             argv0);
     exit(2);
 }
@@ -439,10 +487,12 @@ int main(int argc, char *argv[])
         {"external-at", required_argument, NULL, 'x'},
         {"external-cancel", required_argument, NULL, 'c'},
         {"external-cancel-first", no_argument, NULL, 'f'},
+        {"print-csr", required_argument, NULL, 'r'},
         {NULL, 0, NULL, 0},
     };
+    const char *csr_cn = NULL;
     int c;
-    while ((c = getopt_long(argc, argv, "p:s:u:w:t:x:c:f", opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "p:s:u:w:t:x:c:fr:", opts, NULL)) != -1)
     {
         switch (c)
         {
@@ -479,6 +529,9 @@ int main(int argc, char *argv[])
         case 'f':
             external_cancel_first = true;
             break;
+        case 'r':
+            csr_cn = optarg;
+            break;
         default:
             usage(argv[0]);
         }
@@ -491,7 +544,23 @@ int main(int argc, char *argv[])
 
     snprintf(state_path, sizeof(state_path), "%s/authenticator_state.bin", state_dir);
     snprintf(rk_path, sizeof(rk_path), "%s/resident_keys.bin", state_dir);
-    snprintf(counter_path, sizeof(counter_path), "%s/sign_counter.bin", state_dir);
+    snprintf(se_path, sizeof(se_path), "%s/secure_element.bin", state_dir);
+    snprintf(cert_path, sizeof(cert_path), "%s/attestation_cert.der", state_dir);
+    if (se_init() != 0) {
+        fprintf(stderr, "secure element (%s) failed to start\n", se_backend());
+        exit(1);
+    }
+    load_attestation_cert();
+    if (csr_cn) {
+        uint8_t csr[X509_MIN_MAX];
+        int n = x509_csr(csr_cn, csr, sizeof(csr));
+        if (n < 0)
+            exit(1);
+        for (int i = 0; i < n; i++)
+            printf("%02x", csr[i]);
+        printf("\n");
+        return 0;
+    }
     if (!read_file(rk_path, rk_store, sizeof(rk_store)))
         ctap_reset_rk();
 
