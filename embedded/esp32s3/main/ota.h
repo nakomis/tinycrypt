@@ -43,6 +43,10 @@ void ota_boot(bool local_selftest_ok);
 // From the notifier (MQTT task): subscribed to commands, so this image can be updated and may be
 // kept; reports the version and the outcome of the last update.
 void ota_on_connected(void);
+
+// An update is under way (downloading or awaiting approval): RAM is tight, so other network work
+// (CRYPT-28's metrics) waits.
+bool ota_busy(void);
 // From the notifier (MQTT task): one command from Fleet.
 void ota_handle_command(const char *data, size_t len);
 

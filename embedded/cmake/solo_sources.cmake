@@ -46,6 +46,7 @@ set(TINYCRYPT_PORT_SOURCES
   ${TINYCRYPT_ROOT}/port/presence.c
   ${TINYCRYPT_ROOT}/port/presence_sig.c
   ${TINYCRYPT_ROOT}/port/ota_cmd.c
+  ${TINYCRYPT_ROOT}/port/metrics_line.c
 )
 
 # Binding (CRYPT-18, port/presence.c): ctaphid.c dispatches complete requests through our wrappers,

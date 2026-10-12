@@ -71,6 +71,7 @@ static esp_timer_handle_t connect_deadline;
 static esp_timer_handle_t wifi_retry;
 static uint32_t wifi_retry_ms = WIFI_RETRY_MIN_MS;
 static bool started;
+static bool prov_loaded;  // prov is valid (metrics can run even if MQTT setup failed)
 
 
 static void send_request(void);
@@ -207,6 +208,7 @@ bool notifier_start(void)
         ESP_LOGE(TAG, "notifier off: the key isn't provisioned (the button works)");
         return false;
     }
+    prov_loaded = true;
     snprintf(commands_topic, sizeof(commands_topic), "tinycrypt/%s/commands", prov.thing_name);
     snprintf(responses_topic, sizeof(responses_topic), "tinycrypt/%s/responses", prov.thing_name);
 
@@ -410,4 +412,14 @@ bool notifier_respond(const char *json)
 const char *notifier_thing_name(void)
 {
     return prov.thing_name;
+}
+
+const prov_t *notifier_prov(void)
+{
+    return prov_loaded ? &prov : NULL;
+}
+
+bool notifier_mqtt_connected(void)
+{
+    return mqtt_connected;
 }

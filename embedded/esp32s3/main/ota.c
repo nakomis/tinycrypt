@@ -748,3 +748,8 @@ void ota_approval_done(int result)
     approval_result = result;
     xSemaphoreGive(approval_done);
 }
+
+bool ota_busy(void)
+{
+    return phase != IDLE;
+}

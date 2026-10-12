@@ -17,6 +17,14 @@
 # sits in prov.bin and the key's flash. The real key keeps its private key on the ATECC608 and only
 # ever sends AWS a CSR.
 #
+# Metrics (CRYPT-28): the key sends its health to the house VictoriaMetrics through vmauth on Cal
+# (HOME-437). METRICS_URL (default http://172.29.0.33:8427; "none" for no metrics). vmauth has a user
+# per device, named after the Thing, whose password is SSM /vmauth/device-<thing>-password (read via
+# METRICS_PROFILE, default nakom.is-prod, where vmauth's credentials live); vmauth pins host_name to
+# the user, so a leaked password can only write metrics as this key. A new key needs its user added
+# to vmauth_devices in home-servers' cal/ansible/playbook.yml first. If the password can't be read,
+# the key is provisioned without metrics (a warning, not a failure).
+#
 # Needs AWS_PROFILE (default nakom.is-sandbox) and NPM_ENVIRONMENT (default sandbox). The house
 # Wi-Fi credentials are read from /Nakomis/Wifi/* (as catcam does), via WIFI_PROFILE (default nakom.is-sandbox: they live only in the sandbox account,
 # so a prod key reads them from there too).
@@ -86,6 +94,15 @@ TC_SSID=$(aws ssm get-parameter --profile "$wifi_profile" --name /Nakomis/Wifi/S
 TC_PASSWORD=$(aws ssm get-parameter --profile "$wifi_profile" --name /Nakomis/Wifi/Password --with-decryption \
     --query Parameter.Value --output text)
 
+export TC_METRICS_URL=${METRICS_URL:-http://172.29.0.33:8427} TC_METRICS_USER=$thing TC_METRICS_PASS=
+if [ "$TC_METRICS_URL" = none ]; then
+    TC_METRICS_URL=
+elif ! TC_METRICS_PASS=$(aws ssm get-parameter --profile "${METRICS_PROFILE:-nakom.is-prod}" \
+        --name "/vmauth/device-${thing}-password" --with-decryption --query Parameter.Value --output text 2> /dev/null); then
+    echo "warning: can't read /vmauth/device-${thing}-password (profile ${METRICS_PROFILE:-nakom.is-prod}): no metrics for ${thing}" >&2
+    TC_METRICS_URL= TC_METRICS_PASS=
+fi
+
 IDF_PATH="${IDF_PATH:-$HOME/esp/v5.5/esp-idf}"
 # shellcheck disable=SC1091
 . "$IDF_PATH/export.sh" > /dev/null 2>&1   # for its Python, which has the NVS partition generator
@@ -109,6 +126,13 @@ rows = [
     ("cert", "file", "string", os.path.join(d, "device.pem.crt")),
     ("key", "file", "string", os.path.join(d, "device.pem.key")),
 ]
+# Metrics (CRYPT-28), sizes as prov.h's.
+if os.environ["TC_METRICS_URL"]:
+    url, user, pw = os.environ["TC_METRICS_URL"], os.environ["TC_METRICS_USER"], os.environ["TC_METRICS_PASS"]
+    if len(url.encode()) > 127 or len(user.encode()) > 32 or len(pw.encode()) > 64:
+        sys.exit("metrics URL, user or password too long for prov (127 / 32 / 64 bytes)")
+    rows += [("metrics_url", "data", "string", url), ("metrics_user", "data", "string", user),
+             ("metrics_pass", "data", "string", pw)]
 with open(os.path.join(d, "prov.csv"), "w", newline="", encoding="utf-8") as f:
     w = csv.writer(f)
     w.writerow(("key", "type", "encoding", "value"))
@@ -117,4 +141,4 @@ PY
 python -m esp_idf_nvs_partition_gen generate "${dir}/prov.csv" "${dir}/prov.bin" "$prov_size" > /dev/null
 # Settings once went into the build (CRYPT-15); nothing reads this any more, and it holds the password.
 [ -f "${fw}/sdkconfig.secrets" ] && rm -P "${fw}/sdkconfig.secrets"
-echo "wrote ${dir}/prov.bin for ${thing} (${endpoint}); flash it with esp32s3/flash-manual.sh <port> ${thing}"
+echo "wrote ${dir}/prov.bin for ${thing} (${endpoint}${TC_METRICS_URL:+; metrics to ${TC_METRICS_URL}}); flash it with esp32s3/flash-manual.sh <port> ${thing}"

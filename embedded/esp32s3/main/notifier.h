@@ -26,3 +26,10 @@ bool notifier_respond(const char *json);
 
 // This key's Thing name ("" until notifier_start has read the prov partition).
 const char *notifier_thing_name(void);
+
+// The provisioned settings notifier_start read (NULL before that, or if the key isn't provisioned).
+#include "prov.h"
+const prov_t *notifier_prov(void);
+
+// Whether the MQTT connection to IoT Core is up (CRYPT-28's metrics).
+bool notifier_mqtt_connected(void);

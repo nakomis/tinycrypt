@@ -48,6 +48,9 @@
 #include "uECC.h"
 #ifdef CONFIG_TINYCRYPT_NOTIFIER
 #include "notifier.h"
+#ifdef CONFIG_TINYCRYPT_METRICS
+#include "metrics.h"
+#endif
 #endif
 #ifdef CONFIG_TINYCRYPT_WATCH_BLE
 #include "ble_presence.h"
@@ -594,6 +597,9 @@ void app_main(void)
 #ifdef CONFIG_TINYCRYPT_WATCH_BLE
     bootloader_random_disable();  // (again, if the notifier is off) before the radio starts
     radio |= ble_presence_start();
+#endif
+#ifdef CONFIG_TINYCRYPT_METRICS
+    metrics_start(notifier_prov());
 #endif
 #if defined(CONFIG_TINYCRYPT_NOTIFIER) || defined(CONFIG_TINYCRYPT_WATCH_BLE)
     if (!radio)

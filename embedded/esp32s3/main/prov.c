@@ -22,6 +22,14 @@ static bool get_fixed(nvs_handle_t h, const char *key, char *out, size_t size)
     return err == ESP_OK;
 }
 
+// An optional setting: absent leaves it empty, quietly.
+static void get_optional(nvs_handle_t h, const char *key, char *out, size_t size)
+{
+    size_t len = size;
+    if (nvs_get_str(h, key, out, &len) != ESP_OK)
+        out[0] = 0;
+}
+
 static char *get_alloc(nvs_handle_t h, const char *key)
 {
     size_t len = 0;
@@ -57,6 +65,9 @@ bool prov_load(prov_t *prov)
     ok &= get_fixed(h, "apns", prov->apns_platform, sizeof(prov->apns_platform));
     prov->device_cert = get_alloc(h, "cert");
     prov->device_key = get_alloc(h, "key");
+    get_optional(h, "metrics_url", prov->metrics_url, sizeof(prov->metrics_url));
+    get_optional(h, "metrics_user", prov->metrics_user, sizeof(prov->metrics_user));
+    get_optional(h, "metrics_pass", prov->metrics_pass, sizeof(prov->metrics_pass));
     nvs_close(h);
     if (!ok || prov->device_cert == NULL || prov->device_key == NULL)
     {
