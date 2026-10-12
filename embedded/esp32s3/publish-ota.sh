@@ -3,6 +3,9 @@
 #
 #   esp32s3/publish-ota.sh <x.y.z> [--test-rollback]
 #
+# By hand; normally CI publishes (CRYPT-20: a PR to sandbox, its merge to prod, with the version from
+# the deployment tracker). Use this only when CI can't, with a version above the tracker's.
+#
 # Uploads s3://nakomis-firmware-{env}/tinycrypt/<x.y.z>/firmware.bin with metadata signed=true and
 # its sha256, which Fleet's manifest picks up; then update a key from Fleet's UI. The version must be
 # esp32s3/version.txt, the tree clean (the image says which commit it is), and the version new:
@@ -62,41 +65,17 @@ if $test_rollback; then
     bin="$here/build/rollback-test.bin"
 fi
 config="$here/build/config/sdkconfig.h"
-built=$(python -m esptool --chip esp32s3 image_info --version 2 "$bin" 2> /dev/null | awk -F': *' '/^App version/ { print $2 }')
-[ "$built" = "$version" ] || { echo "the image says version '$built', not $version" >&2; exit 1; }
-
-# What every published image needs: it can be updated (the notifier), it's checked on probation
-# (rollback), and it checks the next one's signature.
-for option in CONFIG_TINYCRYPT_NOTIFIER CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT; do
-    grep -q "^#define ${option} 1$" "$config" || { echo "the build lacks ${option}: not publishing" >&2; exit 1; }
-done
-if grep -q '^#define CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST 1$' "$config" && ! $test_rollback; then
-    echo "this build fails its self-test on purpose (CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST): not publishing" >&2
-    exit 1
-fi
-# A short download deadline is only for testing it (CRYPT-21): published, it would fail real updates.
-deadline=$(awk '/^#define CONFIG_TINYCRYPT_OTA_DOWNLOAD_DEADLINE_S / { print $3 }' "$config")
-[ "${deadline:-0}" -ge 120 ] || { echo "the download deadline is ${deadline:-unset} s (< 120): not publishing" >&2; exit 1; }
-# Signed by this environment's key, or every key in the field refuses it.
-espsecure.py verify_signature --version 2 --keyfile "$here/ota-signing/${env}.pub.pem" "$bin" > /dev/null 2>&1 || {
-    echo "the image isn't signed by the $env key (ota-signing/${env}.pub.pem): not publishing" >&2
-    exit 1
-}
-
-# No secrets or per-key settings in a published image (they live in the prov partition): no Thing
-# name, endpoint or Wi-Fi SSID, and no line of any provisioned key's certificate or private key.
-# (Not a bare "PRIVATE KEY": mbedTLS's PEM parser has that string in every image.)
-needles=("tinycrypt-${env}-key" "-ats.iot." "$ssid")
+# shellcheck source=tools/image-checks.sh
+. "$here/tools/image-checks.sh"
+check_image_version "$bin" "$version"
+check_image_config "$config" "$test_rollback"
+check_image_signed "$bin" "$env"
+needles=("$ssid")
 shopt -s nullglob
 for pem in "$here"/certs/*/device.pem.key "$here"/certs/*/device.pem.crt; do
     needles+=("$(sed -n 2p "$pem")")
 done
-for needle in "${needles[@]}"; do
-    if LC_ALL=C grep -qaF -- "$needle" "$bin"; then
-        echo "the image contains a per-key string (\"${needle:0:12}...\"): not publishing" >&2
-        exit 1
-    fi
-done
+check_image_strings "$bin" "$env" "${needles[@]}"
 
 sha=$(shasum -a 256 "$bin" | cut -d' ' -f1)
 # --if-none-match: a published version is never replaced, even by a publish racing this one.

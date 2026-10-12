@@ -2,6 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
+import { GithubCiStack } from '../lib/github-ci-stack';
 import { KeyStack } from '../lib/key-stack';
 import { PushStack } from '../lib/push-stack';
 
@@ -34,4 +35,10 @@ new KeyStack(app, 'TinycryptKeyStack', {
     deployEnv,
     keyNames,
     description: `tinycrypt security keys as IoT Things, and what they may publish (${deployEnv})`,
+});
+
+new GithubCiStack(app, 'TinycryptGithubCiStack', {
+    env,
+    deployEnv,
+    description: `tinycrypt GitHub Actions role: sign and publish firmware (${deployEnv})`,
 });
