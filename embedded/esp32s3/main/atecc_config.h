@@ -19,8 +19,8 @@
 // P-256 slots, SlotConfig 0x2081: ReadKey bit 0 only (signs external digests; no internal sign,
 // no ECDH), IsSecret (GenKey and Sign need it), WriteConfig 0010 (GenKey may make a key here,
 // PrivWrite forbidden, so a private key can only ever be generated on the chip). KeyConfig
-// 0x0033: Private, PubInfo (the public key can be read back), KeyType 4 (P-256), Lockable (a slot
-// can be frozen later with Lock). The spares are configured the same so per-site keys (scheme C)
+// 0x0033: Private, PubInfo (the public key can be read back), KeyType 4 (P-256), Lockable: the
+// provisioner locks slots 0 and 1 right after GenKey, so those keys can never be replaced. The spares are configured the same so per-site keys (scheme C)
 // stay possible: the configuration can never change once locked.
 //
 // Master secret, SlotConfig 0x208F: IsSecret with EncryptRead 0 (never readable), NoMac 0 (the

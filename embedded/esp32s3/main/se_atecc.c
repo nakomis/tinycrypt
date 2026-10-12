@@ -86,6 +86,16 @@ int se_init(void)
         return 0;
     if (se_atecc_open() != 0 || verify_provisioned() != 0)
         return -1;
+    // The provisioner locks each key slot right after GenKey: unlocked means no key of ours.
+    for (uint16_t slot = ATECC_SLOT_IOT; slot <= ATECC_SLOT_ATTEST; slot++) {
+        bool locked = false;
+        if (check("slot lock", WITH_LOCK(atcab_is_slot_locked(slot, &locked))) != 0)
+            return -1;
+        if (!locked) {
+            ESP_LOGE(TAG, "slot %u has no key yet: run the provisioner's lock again", slot);
+            return -1;
+        }
+    }
     uint8_t pub[SE_PUB_LEN];
     if (se_pubkey(SE_SLOT_IOT, pub) != 0 || se_pubkey(SE_SLOT_ATTEST, pub) != 0)
         return -1;

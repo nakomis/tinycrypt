@@ -11,8 +11,10 @@
 // Locking: write the configuration (atecc_config.h over the factory bytes), read it back and
 // check it, lock it with the CRC of what was read (so the lock fails if the bus corrupted
 // anything), write the master secret (slot 9) from the chip's RNG (real only once the
-// configuration is locked), lock the data zone, then GenKey slots 0 and 1. Keys that exist are
-// never replaced: the attestation certificate and the IoT certificate depend on them.
+// configuration is locked), lock the data zone, then GenKey slots 0 and 1 and lock each slot.
+// A locked slot is how a later run knows its key was made by GenKey (a readable public key
+// proves nothing: the slot's factory bytes might pass for one), and it stops any firmware from
+// replacing the attestation or IoT key with GenKey later.
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -117,9 +119,12 @@ static bool lock_data(void)
 static bool ensure_key(uint16_t slot)
 {
     uint8_t pub[64];
-    if (atcab_get_pubkey(slot, pub) == ATCA_SUCCESS)
+    bool locked = false;
+    if (!status_ok("slot lock", atcab_is_slot_locked(slot, &locked)))
+        return false;
+    if (locked)
         return true;
-    return status_ok("genkey", atcab_genkey(slot, pub));
+    return status_ok("genkey", atcab_genkey(slot, pub)) && status_ok("lock slot", atcab_lock_data_slot(slot));
 }
 
 static void cmd_lock(const char *arg)
