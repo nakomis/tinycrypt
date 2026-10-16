@@ -1,0 +1,6 @@
+# BOARD=cam (build.sh): the ESP32-S3 "WROOM CAM" dev board (N16R8, camera and SD card slots), used
+# as a test key while the PCB doesn't exist. Its GPIO38 is the SD card's CMD line and GPIO8 a camera
+# data line, both held low, so the ATECC's SDA moves to GPIO47 (SCL stays on 21). Its own WS2812 is
+# on GPIO48. The PCB keeps sdkconfig.defaults' pins.
+CONFIG_ATCA_I2C_SDA_PIN=47
+CONFIG_TINYCRYPT_LED_GPIO=48

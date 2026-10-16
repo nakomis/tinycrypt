@@ -86,6 +86,7 @@ embedded/build/
 embedded/esp32s3/build/
 embedded/esp32s3/sdkconfig
 embedded/esp32s3/sdkconfig.old
+embedded/esp32s3/.board
 embedded/esp32s3/managed_components/
 # Written by infra/scripts/provision-key.sh: Wi-Fi password, device certificate and private key
 embedded/esp32s3/sdkconfig.secrets

@@ -2,7 +2,8 @@
 // infra/scripts/provision-key.sh writes. Nothing here is in the firmware image, so every key runs
 // the same image and a published update holds no secrets.
 //
-// INSECURE, TEST ONLY: the device private key sits in plain flash; the ATECC608 replaces it.
+// The IoT private key is the secure element's (CRYPT-22, se_tls.c); only keys provisioned before
+// that still have one here, which the soft-key test build uses until they're reprovisioned.
 #pragma once
 
 #include <stdbool.h>
@@ -16,7 +17,7 @@ typedef struct
     char presence_topic[192];   // tinycrypt/{env}/presence/{thing}/request
     char apns_platform[16];     // APNS_SANDBOX or APNS
     char *device_cert;          // PEM, malloc'd
-    char *device_key;           // PEM, malloc'd
+    char *device_key;           // PEM, malloc'd; NULL unless left over from before CRYPT-22
     // Optional (CRYPT-28): where the key sends its metrics, the house VictoriaMetrics through
     // vmauth. Empty url = no metrics. The password is write-only and assumed public (it sits in
     // plain flash), so it grants nothing but writing metrics.

@@ -24,7 +24,7 @@ add_library(tinycrypt_port STATIC ${TINYCRYPT_PORT_SOURCES})
 target_link_libraries(tinycrypt_port PUBLIC solo_core PkgConfig::CJSON)
 target_compile_options(tinycrypt_port PRIVATE -Wall -Wextra -Werror)
 
-add_executable(tinycrypt-sim sim/sim_main.c)
+add_executable(tinycrypt-sim sim/sim_main.c ${TINYCRYPT_SE_SOFT_SOURCES})
 target_link_libraries(tinycrypt-sim PRIVATE tinycrypt_port solo_core)
 
 add_executable(tinycrypt-sigcheck sim/sigcheck_main.c)

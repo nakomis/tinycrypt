@@ -52,3 +52,14 @@ CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n
 # a module with no PSRAM (the MINI-1-N8): allocate TLS record buffers only while they're needed.
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
+
+# Secure element (CRYPT-22). The ATECC608B on I2C, on the PCB's pins (DESIGN.md: SDA 38, SCL 21);
+# a blank chip answers at 0xC0 (8-bit), the M5Stack Trust&GO unit at 0x6A. cryptoauthlib's mbedTLS
+# hooks stay off: the TLS client signature goes to the element through se_tls.c instead, which
+# CONFIG_MBEDTLS_ATCA_HW_ECDSA_SIGN routes every mbedTLS ECDSA signature to.
+CONFIG_ATECC608A_TCUSTOM=y
+CONFIG_ATCA_I2C_SDA_PIN=38
+CONFIG_ATCA_I2C_SCL_PIN=21
+CONFIG_ATCA_I2C_ADDRESS=0xC0
+CONFIG_ATCA_I2C_BAUD_RATE=100000
+CONFIG_MBEDTLS_ATCA_HW_ECDSA_SIGN=y

@@ -7,8 +7,10 @@
 //   (port/presence.c). With CONFIG_TINYCRYPT_NOTIFIER a push asks the watch; with
 //   CONFIG_TINYCRYPT_WATCH_BLE the watch approves by signing a BLE challenge (ble_presence.c).
 //   The button always works on its own. Hold it 5 s while idle to open the watch enrol window.
-// - Keystore: INSECURE software key. Master secret, resident keys and the
-//   sign counter live in plain NVS. TEST ONLY.
+// - Keystore (CRYPT-22): the secure element (secure_element.h) holds the credential master
+//   secret, the attestation and IoT keys and the sign counter: the ATECC608B (se_atecc.c), or in
+//   the INSECURE test build a software stand-in in plain NVS (port/se_soft.c). Resident keys and
+//   the attestation certificate (public) are in NVS.
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -43,8 +45,11 @@
 #endif
 #include "led_status.h"
 #include "ota.h"
+#include "crypto_tc.h"
 #include "presence.h"
 #include "sdkconfig.h"
+#include "secure_element.h"
+#include "x509_min.h"
 #include "uECC.h"
 #ifdef CONFIG_TINYCRYPT_NOTIFIER
 #include "notifier.h"
@@ -75,6 +80,7 @@ static const char *TAG = "tinycrypt";
 
 static QueueHandle_t rx_queue;
 static nvs_handle_t nvs;
+static bool se_ok;  // the secure element started and the attestation certificate exists
 static bool up_disabled = false;
 static CTAP_residentKey rk_store[RK_NUM];
 
@@ -116,7 +122,11 @@ static char serial_string[16] = "0001";
 static const char *string_descriptor[] = {
     (const char[]){0x09, 0x04}, // English
     "nakomis",
+#ifdef TINYCRYPT_INSECURE_SOFT_KEY
     "tinycrypt INSECURE TEST KEY",
+#else
+    "tinycrypt",
+#endif
     serial_string,
     "FIDO",
 };
@@ -329,7 +339,7 @@ static void run_ota_approval(void)
     ota_approval_done(presence_wait_external(OTA_APPROVAL_MS, hash, label, presence_sources, N_PRESENCE_SOURCES, &usb_io));
 }
 
-// ---- rng, counter, state (INSECURE: plain NVS) ------------------------------
+// ---- rng, counter, state ----------------------------------------------------
 
 int ctap_generate_rng(uint8_t *dst, size_t num)
 {
@@ -351,25 +361,90 @@ static void nvs_write(const char *key, const void *data, size_t len)
     ESP_ERROR_CHECK(nvs_commit(nvs));
 }
 
+// The secure element's monotonic counter (Counter[1] on the ATECC). A failure must not let the
+// count go backwards or repeat, so it aborts (and reboots) rather than return a stale value.
 uint32_t ctap_atomic_count(uint32_t amount)
 {
-    uint32_t counter = 0;
-    esp_err_t err = nvs_get_u32(nvs, "counter", &counter);
-    // Only a missing counter may start from 0. On any other read error, fail
-    // closed (abort and reboot) rather than let the sign count go backwards.
-    if (err != ESP_ERR_NVS_NOT_FOUND)
-        ESP_ERROR_CHECK(err);
-    counter += amount + 1;
-    ESP_ERROR_CHECK(nvs_set_u32(nvs, "counter", counter));
-    ESP_ERROR_CHECK(nvs_commit(nvs));
-    return counter;
+    uint32_t value = 0;
+    for (uint32_t i = 0; i <= amount; i++)
+        if (se_counter_increment(&value) != 0)
+            abort();
+    return value;
+}
+
+// The FIDO attestation certificate: made once, self-signed by the element's attestation key
+// (x509_min.c), kept in NVS. It's public; the key never leaves the element.
+static uint8_t attest_cert[X509_MIN_MAX];
+static size_t attest_cert_len;
+
+static bool load_attestation_cert(void)
+{
+    size_t len = sizeof(attest_cert);
+    // Reused only if it carries the element's current key: a new chip, or a move from the soft
+    // element to the ATECC, needs a new certificate.
+    if (nvs_get_blob(nvs, "attest_cert", attest_cert, &len) == ESP_OK && len > 0 &&
+        x509_cert_is_current(attest_cert, len))
+    {
+        attest_cert_len = len;
+        return true;
+    }
+    int n = x509_attestation_cert((const uint8_t *)TINYCRYPT_AAGUID, attest_cert, sizeof(attest_cert));
+    if (n < 0)
+    {
+        ESP_LOGE(TAG, "could not make the attestation certificate");
+        return false;
+    }
+    attest_cert_len = (size_t)n;
+    nvs_write("attest_cert", attest_cert, attest_cert_len);
+    ESP_LOGI(TAG, "attestation certificate made (%u bytes)", (unsigned)attest_cert_len);
+    return true;
+}
+
+// A key whose ATECC608B has worked is marked in NVS, and a soft-key image refuses to run on it:
+// otherwise an update with the wrong image would quietly move its secrets into plain NVS. (The
+// other way round, an ATECC image finds no provisioned chip.) Refusing fails the self-test, so an
+// update rolls back.
+static bool keystore_allowed(void)
+{
+#ifdef TINYCRYPT_INSECURE_SOFT_KEY
+    uint8_t atecc = 0;
+    if (nvs_get_u8(nvs, "ks_atecc", &atecc) == ESP_OK && atecc == 1)
+    {
+        ESP_LOGE(TAG, "this key uses an ATECC608B: a soft-key image must not run on it");
+        return false;
+    }
+#endif
+    return true;
+}
+
+static void keystore_mark(void)
+{
+#ifdef TINYCRYPT_KEYSTORE_ATECC
+    uint8_t atecc = 0;
+    if (nvs_get_u8(nvs, "ks_atecc", &atecc) != ESP_OK || atecc != 1)
+    {
+        ESP_ERROR_CHECK(nvs_set_u8(nvs, "ks_atecc", 1));
+        ESP_ERROR_CHECK(nvs_commit(nvs));
+    }
+#endif
+}
+
+void device_attestation_read_cert_der(uint8_t *dst)
+{
+    memmove(dst, attest_cert, attest_cert_len);
+}
+
+uint16_t device_attestation_cert_der_get_size(void)
+{
+    return (uint16_t)attest_cert_len;
 }
 
 int authenticator_read_state(AuthenticatorState *state)
 {
-    if (!nvs_read("state", state, sizeof(*state)))
-        return 0;
-    return state->is_initialized == INITIALIZED_MARKER;
+    if (nvs_read("state", state, sizeof(*state)) && state->is_initialized == INITIALIZED_MARKER)
+        return 1;
+    crypto_tc_state_missing();
+    return 0;
 }
 
 void authenticator_write_state(AuthenticatorState *state)
@@ -440,9 +515,10 @@ static void report_last_crash(void)
     printf("%s\n", summary.exc_bt_info.corrupted ? " (corrupted)" : "");
 }
 
-// What a new image must pass before it's kept (CRYPT-14, ota.h): the key's NVS state reads back
-// (sign counter, authenticator state; resident keys were loaded in app_main) and ECDSA P-256 works
-// as the CTAP core uses it (micro-ecc). A failure rolls the update back. The rest (USB comes up;
+// What a new image must pass before it's kept (CRYPT-14, ota.h): the secure element answers (it
+// started, and its attestation key and master secret work), the authenticator state reads back
+// (resident keys were loaded in app_main) and ECDSA P-256 works as the CTAP core uses it
+// (micro-ecc). A failure rolls the update back. The rest (USB comes up;
 // IoT Core is reachable, so the image can itself be updated) is checked as boot carries on.
 static int selftest_rng(uint8_t *dst, unsigned size)
 {
@@ -456,15 +532,16 @@ static bool local_selftest(void)
     ESP_LOGE(TAG, "self-test: failing on purpose (CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST)");
     return false;
 #endif
-    uint32_t counter;
-    esp_err_t err = nvs_get_u32(nvs, "counter", &counter);
-    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
+    uint8_t se_pub[SE_PUB_LEN], se_mac[SE_HMAC_LEN];
+    static const uint8_t probe[] = "tinycrypt self-test";
+    if (!se_ok || attest_cert_len == 0 || se_pubkey(SE_SLOT_ATTEST, se_pub) != 0 ||
+        se_hmac(probe, sizeof(probe), se_mac) != 0)
     {
-        ESP_LOGE(TAG, "self-test: sign counter unreadable (%s)", esp_err_to_name(err));
+        ESP_LOGE(TAG, "self-test: secure element (%s) not working", se_backend());
         return false;
     }
     size_t len = 0;
-    err = nvs_get_blob(nvs, "state", NULL, &len);
+    esp_err_t err = nvs_get_blob(nvs, "state", NULL, &len);
     if ((err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) || (err == ESP_OK && len != sizeof(AuthenticatorState)))
     {
         ESP_LOGE(TAG, "self-test: authenticator state unreadable (%s, %u bytes)", esp_err_to_name(err), (unsigned)len);
@@ -520,15 +597,22 @@ static void ctap_task(void *arg)
     // Here rather than app_main: two ECDSA verifies need more than the main task's 3.5 KB stack.
     se_selftest_run();
 #endif
-    ctaphid_init();
-    ctap_init();
-    ESP_LOGI(TAG, "CTAP core ready");
+    // Without the secure element there are no credentials to use: don't answer CTAP. Update
+    // approvals keep running, which only helps when the element works but the attestation
+    // certificate couldn't be made: without the element there's no IoT key, so no MQTT and no
+    // updates, and the fix is a wired flash.
+    if (se_ok)
+    {
+        ctaphid_init();
+        ctap_init();
+        ESP_LOGI(TAG, "CTAP core ready");
+    }
 
     uint8_t msg[REPORT_SIZE];
     UBaseType_t low_water = UINT32_MAX;
     for (;;)
     {
-        if (usbhid_recv(msg, pdMS_TO_TICKS(10)) > 0)
+        if (usbhid_recv(msg, pdMS_TO_TICKS(10)) > 0 && se_ok)
         {
             presence_note_report(msg);
             ctaphid_handle_packet(msg);
@@ -546,7 +630,8 @@ static void ctap_task(void *arg)
                 ESP_LOGI(TAG, "ctap task stack: %u bytes never used", (unsigned)low_water);
             }
         }
-        ctaphid_check_timeouts();
+        if (se_ok)
+            ctaphid_check_timeouts();
         run_ota_approval();
 #ifdef CONFIG_TINYCRYPT_WATCH_BLE
         check_enrol_hold();
@@ -556,7 +641,9 @@ static void ctap_task(void *arg)
 
 void app_main(void)
 {
+#ifdef TINYCRYPT_INSECURE_SOFT_KEY
     printf("%s", TINYCRYPT_SOFT_KEY_BANNER);
+#endif
     snprintf(serial_string, sizeof(serial_string), "0001-rr%d", (int)esp_reset_reason());
     report_last_crash();
 
@@ -577,14 +664,26 @@ void app_main(void)
     if (!nvs_read("rk", rk_store, sizeof(rk_store)))
         ctap_reset_rk();
 
+    // No radio yet: the ADC noise feeds the RNG that the soft element's first keys come from.
+    bootloader_random_enable();
+    se_ok = keystore_allowed() && se_init() == 0 && load_attestation_cert();
+    if (se_ok)
+    {
+        keystore_mark();
+        ESP_LOGI(TAG, "secure element: %s", se_backend());
+    }
+    else
+        ESP_LOGE(TAG, "secure element (%s) unavailable: no CTAP", se_backend());
+
     led_status_start();
 #ifdef CONFIG_TINYCRYPT_NOTIFIER
     led_status_set(LED_CONNECTING, true);
 #endif
+    if (!se_ok)
+        led_status_set(LED_FAULT, true);
 
-    // No radio is on, so use the ADC noise source for esp_fill_random().
-    // Must be disabled again before Wi-Fi/BLE or the ADC are used.
-    bootloader_random_enable();
+    // (The ADC noise source, enabled above, stays on until a radio starts: it must be disabled
+    // again before Wi-Fi/BLE or the ADC are used.)
 
     // A new image from an update proves itself before it's kept (rolled back otherwise).
     ota_boot(local_selftest());

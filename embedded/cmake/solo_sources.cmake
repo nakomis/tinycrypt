@@ -46,14 +46,33 @@ set(TINYCRYPT_PORT_SOURCES
   ${TINYCRYPT_ROOT}/port/presence.c
   ${TINYCRYPT_ROOT}/port/presence_sig.c
   ${TINYCRYPT_ROOT}/port/ota_cmd.c
+  ${TINYCRYPT_ROOT}/port/crypto_tc.c
+  ${TINYCRYPT_ROOT}/port/x509_min.c
   ${TINYCRYPT_ROOT}/port/metrics_line.c
 )
+# The INSECURE software secure element: the sim, and an ESP32 with no ATECC608B.
+set(TINYCRYPT_SE_SOFT_SOURCES ${TINYCRYPT_ROOT}/port/se_soft.c)
 
 # Binding (CRYPT-18, port/presence.c): ctaphid.c dispatches complete requests through our wrappers,
 # which note the exact buffer solo1 acts on before calling the real functions.
 # Applied where the target is defined (set_source_files_properties isn't scriptable, and ESP-IDF
 # also reads this file in script mode).
 set(SOLO_CTAPHID_DEFINES ctap_request=tc_ctap_request u2f_request=tc_u2f_request)
+
+# Secure element (CRYPT-22, port/crypto_tc.c): crypto.c is compiled with its secret-handling
+# functions renamed to solo_*, and crypto_tc.c supplies the real ones. The rest of crypto.c (plain
+# SHA, ECDH, AES with ordinary keys, the wallet's external keys) is used as it is.
+set(SOLO_CRYPTO_RENAMED
+  crypto_sha256_init crypto_sha256_update crypto_sha256_final crypto_sha256_update_secret
+  crypto_sha256_hmac_init crypto_sha256_hmac_final crypto_aes256_init
+  crypto_load_master_secret crypto_reset_master_secret generate_private_key
+  crypto_ecc256_derive_public_key crypto_ecc256_load_key crypto_ecc256_load_attestation_key
+  crypto_ecc256_sign crypto_ed25519_derive_public_key crypto_ed25519_load_key crypto_ed25519_sign
+)
+set(SOLO_CRYPTO_DEFINES "")
+foreach(fn ${SOLO_CRYPTO_RENAMED})
+  list(APPEND SOLO_CRYPTO_DEFINES ${fn}=solo_${fn})
+endforeach()
 
 set(SOLO_CORE_INCLUDES
   ${TINYCRYPT_ROOT}/port
@@ -77,6 +96,9 @@ set(SOLO_CORE_DEFINES
 )
 if(TINYCRYPT_INSECURE_SOFT_KEY)
   list(APPEND SOLO_CORE_DEFINES TINYCRYPT_INSECURE_SOFT_KEY)
+endif()
+if(TINYCRYPT_KEYSTORE_ATECC)
+  list(APPEND SOLO_CORE_DEFINES TINYCRYPT_KEYSTORE_ATECC)
 endif()
 if(TINYCRYPT_RELEASE)
   list(APPEND SOLO_CORE_DEFINES TINYCRYPT_RELEASE)

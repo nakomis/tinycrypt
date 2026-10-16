@@ -60,9 +60,9 @@ git -C third_party/solo1 submodule update --init crypto/cifra crypto/micro-ecc c
 | Path (under `embedded/`) | What it is |
 |---|---|
 | `cmake/solo_sources.cmake` | The core's source list, shared by both builds |
-| `port/` | App config and the keystore guard (`TINYCRYPT_INSECURE_SOFT_KEY`, refused in release builds) |
+| `port/` | Portable code: the secure-element interface and solo1's crypto routed through it, presence, the soft element (`TINYCRYPT_INSECURE_SOFT_KEY`, refused in release builds) |
 | `sim/` | Mac simulator: CTAPHID over UDP, state in a directory |
-| `esp32s3/` | ESP-IDF firmware: TinyUSB FIDO HID, NVS soft key, BOOT-button presence |
+| `esp32s3/` | ESP-IDF firmware: TinyUSB FIDO HID, the ATECC608B (or the soft element in NVS), presence, the provisioner |
 | `tests/` | python-fido2 tests against the sim, plus `hw_smoke.py` for a real key |
 
 **Mac sim** (needs `brew install libsodium`):
@@ -77,7 +77,7 @@ build/tinycrypt-sim --presence prompt     # run it by hand; press Enter to appro
 **ESP32-S3** (ESP-IDF 5.5 in `~/esp/v5.5/esp-idf`):
 
 ```bash
-esp32s3/build.sh                                    # build
+esp32s3/build.sh                                    # build (KEYSTORE=atecc for the ATECC608B; soft by default)
 esp32s3/build.sh -p /dev/cu.usbmodemXXXX flash      # flash over the UART port
 esp32s3/flash-manual.sh /dev/cu.usbmodemXXXX        # if auto-reset fails: hold BOOT, tap RST, release BOOT first
 tests/.venv/bin/python tests/hw_smoke.py            # register + authenticate; press BOOT when asked
@@ -85,6 +85,26 @@ tests/.venv/bin/python tests/hw_smoke.py            # register + authenticate; p
 
 The key enumerates on the S3's **native** USB port (not the UART one) as
 "tinycrypt INSECURE TEST KEY", USB ID 303a:4004.
+
+**ATECC608B** (CRYPT-22). Wire a breakout to the dev board: VCC to 3V3, GND, SDA to GPIO38, SCL to
+GPIO21 (the PCB's pins; change them under esp-cryptoauthlib in `esp32s3/build.sh menuconfig`). The
+breakouts have their own pull-ups. A blank chip answers at 0xC0 (8-bit); the M5Stack Trust&GO unit
+(0x6A) is factory-locked and can't take tinycrypt's configuration. Locking is permanent: do a
+sacrificial chip first. The provisioner's console is the **native** USB port (USB-Serial-JTAG), so
+connect that one; flashing it and the key image straight after needs no BOOT+RST.
+
+```bash
+KEYSTORE=atecc esp32s3/build.sh provisioner                 # the provisioner image
+ESPTOOL_BEFORE=default_reset esp32s3/flash-manual.sh --provisioner /dev/cu.usbmodemXXXX  # else BOOT+RST first
+esp32s3/tools/atecc_provision.py /dev/cu.usbmodemXXXX info
+esp32s3/tools/atecc_provision.py /dev/cu.usbmodemXXXX lock  # PERMANENT; asks for the serial
+esp32s3/tools/atecc_provision.py /dev/cu.usbmodemXXXX csr tinycrypt-sandbox-key-1 /tmp/key-1.csr
+infra/scripts/provision-key.sh key-1 --csr /tmp/key-1.csr   # certificate from the chip's own key
+KEYSTORE=atecc esp32s3/build.sh && ESPTOOL_BEFORE=default_reset esp32s3/flash-manual.sh /dev/cu.usbmodemXXXX   # the key again
+```
+
+The same steps with the default soft keystore move a key's IoT private key out of `prov` into its
+(INSECURE) soft element, with no chip.
 
 ## Architecture Diagram
 

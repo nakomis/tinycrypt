@@ -76,7 +76,51 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   `extensions/wallet.c` too, even on CTAP2 paths, so a cancelled CTAP2 wait reports ACTION_TIMEOUT 0x3A.)
   `test_u2f_respects_denied_presence` guards this.
 - **CI**: the "Protect main" ruleset requires a check named exactly `CI Status`.
-- **Software key is INSECURE, TEST ONLY**: gated behind `TINYCRYPT_INSECURE_SOFT_KEY`, loud boot
+- **Secure element** (CRYPT-22, `port/secure_element.h`): the credential master secret, the attestation key,
+  the IoT TLS key and the sign counter live in it. Backends: the **ATECC608B** (`esp32s3/main/se_atecc.c`,
+  `KEYSTORE=atecc esp32s3/build.sh`) and `port/se_soft.c`, an INSECURE stand-in (sim file, ESP32 NVS) for
+  `TINYCRYPT_INSECURE_SOFT_KEY` builds (the default until the chip is proven). **Scheme A** (Martin, 12 Oct):
+  per-site keys are HMAC(master, `tc-cred-key` ‖ ctr ‖ credential ID), built in RAM, used once, wiped; so
+  until secure boot is on, anyone who can flash the key can clone it (secure boot completes it, later).
+  solo1's `crypto.c` is compiled with its secret-handling functions renamed `solo_*` (`SOLO_CRYPTO_DEFINES`)
+  and `port/crypto_tc.c` replaces them: HMACs with solo1's MASTER/TRANSPORT keys go to the element with a
+  label each (message ≤ 228 bytes, the ATECC's SHA limit), attestation signs on the element, Ed25519 too.
+  A CTAP reset rolls the master secret (DeriveKey Roll): solo1 signals it only by new `key_space` bytes,
+  so `crypto_load_master_secret` rolls when they change after boot. The attestation certificate is
+  self-signed by the element (`port/x509_min.c`, FIDO subject, AAGUID extension; made at first boot,
+  kept in NVS); a Nakomis CA version is CRYPT-25. **ATECC configuration** (`atecc_config.h`, checked bit by
+  bit by `tests/test_atecc_config.py` against the 608A datasheet's tables): slots 0–7 P-256, external
+  sign only, GenKey yes, PrivWrite no (0 IoT, 1 attestation, 2–7 spare for per-site keys later); 9 the
+  master secret (never readable, Write never, DeriveKey Roll without MAC, ReqRandom: which covers the SHA command's HMAC too, so `se_hmac` loads a random nonce first); the rest inert;
+  sign counter = Counter[1]. **Provisioning** is a separate image (`build.sh provisioner`,
+  `flash-manual.sh --provisioner`, then `esp32s3/tools/atecc_provision.py PORT info|lock|csr`; its console is
+  the native USB-Serial-JTAG port, so `ESPTOOL_BEFORE=default_reset` flashes it, and the key image after it,
+  with no BOOT+RST):
+  `lock` asks for the chip's serial to be typed, writes the configuration, checks it read back, locks it
+  by CRC, writes the master secret from the chip's RNG, locks data, GenKeys 0 and 1; `csr` gives the IoT
+  CSR for `provision-key.sh key-N --csr FILE` (create-certificate-from-csr; no private key anywhere). `check` then confirms the chip enforces its
+  configuration (`check full`, sacrificial chip only, also tries GenKey/PrivWrite on the key slots and a
+  roll). Proven on a 608A clone (16 Oct). The camera dev board ("WROOM CAM") holds GPIO38 (SD CMD) and
+  GPIO8 (camera) low, so it builds with `BOARD=cam` (SDA on 47, LED on 48); the breakouts' JST lead was
+  miswired, so wire to the header pads.
+  **TLS:** esp-tls's own secure-element support re-inits and releases cryptoauthlib and routes all ECDSA
+  verifies to the chip, so it's off; instead `se_tls.c` hands esp-mqtt a PEM whose scalar is a public
+  marker, and `CONFIG_MBEDTLS_ATCA_HW_ECDSA_SIGN` routes every mbedTLS ECDSA signature to our
+  `mbedtls_ecdsa_sign`, which signs the marker on the element (slot 0) and refuses anything else (soft
+  builds still sign a pre-CRYPT-22 prov key in software, so key-1 stays online until reprovisioned).
+  Credential IDs are hashed before the HMAC (a relying party picks their length; the chip takes 228
+  bytes at most), and a credential's key is derived inside the sign call, never left loaded (U2F loads
+  before asking presence). A missing or corrupt authenticator state rolls the master too
+  (`crypto_tc_state_missing`): solo1 then starts with no PIN, so old credentials must not survive.
+  Still open until flash encryption: the PIN hash sits in plain NVS, so a flash dump can brute-force a
+  short PIN offline. The attestation certificate is checked against the element's key at boot and
+  remade after a change of chip or keystore. The provisioner locks slots 0 and 1 after GenKey
+  (a locked slot is how a rerun, and `se_init`, know the key is ours; it also stops any firmware
+  replacing them). Every chip call holds one mutex (CTAP and MQTT tasks). A board whose ATECC has worked is marked in
+  NVS (`ks_atecc`) and refuses a soft-key image, so a wrong update rolls back. Without a working element
+  there's no CTAP (LED fault) and, since the IoT TLS key is in the element too, no IoT connection, so no
+  updates either: a key whose element fails is reflashed over USB. (A new image without one rolls back.)
+- **Soft key is INSECURE, TEST ONLY**: gated behind `TINYCRYPT_INSECURE_SOFT_KEY`, loud boot
   banner, must not build in release config. Only ever register it against the read-only Identity Center test user.
 - **Watch signature convention** (CRYPT-10, proven with a real Secure Enclave key): the watch signs
   with `SecureEnclave.P256.Signing.PrivateKey.signature(for: message)`, which ECDSA-signs
@@ -122,7 +166,7 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   (solo1's U2F path re-asks every 750 ms while the browser retries; without this, one sign-in sent dozens
   of pushes). It is enqueued at QoS 1 for the MQTT task (normally no blocking), and the outbox drops it
   after 10 s unsent, so a reconnect can't deliver a stale prompt. Setup failures switch the notifier off
-  rather than aborting; the BOOT button works regardless. `infra/scripts/provision-key.sh [key-N] [--new]`
+  rather than aborting; the BOOT button works regardless. `infra/scripts/provision-key.sh [key-N] [--new | --csr FILE]`
   makes (or with `--new` replaces, retiring the old one) the certificate and writes
   `esp32s3/certs/<thing>/` (uncommitted), including `prov.bin`: the key's **`prov` NVS partition**
   (CRYPT-14) with its Wi-Fi (from SSM `/Nakomis/Wifi/*`), endpoint, Thing name, topic, APNs platform,
