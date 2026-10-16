@@ -90,6 +90,29 @@ wire colours mean nothing: go by pin position; a USB-C plug needs CC wired to pi
 **Next revision:** make J1 the common 4-pin SH1.0 order (VBUS, D−, D+, GND), with CC left to the
 cable's USB-C plug, so off-the-shelf "Type-C to SH1.0 4P" cables plug straight in.
 
+## Bring-up (each new board, into prod)
+
+Needs PR #17 (the ATECC firmware) merged. N is the key's number; add `key-N` to `prod` in
+`infra/keys.json` and `pnpm run deploy-prod` first (it creates the Thing).
+
+1. **Meter the cable** against J1 (1 VBUS, 2 D−, 3 D+, 4 CC or unconnected, 5 GND), and the board's
+   3V3 to GND for a short, before the first plug-in. Plug in through the power meter: 5 V, tens of mA.
+2. **Provisioner** (PCB pins, so no `BOARD`): hold BOOT, plug in (a blank module enumerates as
+   USB-Serial-JTAG), then `KEYSTORE=atecc esp32s3/build.sh provisioner` and
+   `esp32s3/flash-manual.sh --provisioner PORT`.
+3. `esp32s3/tools/atecc_provision.py PORT info` (a blank 608B: unlocked), `lock` (type the serial),
+   then `check` (not `check full`: that's for a sacrificial chip).
+4. `atecc_provision.py PORT csr tinycrypt-prod-key-N FILE`, then
+   `NPM_ENVIRONMENT=prod AWS_PROFILE=nakom.is-prod infra/scripts/provision-key.sh key-N --csr FILE`
+   (`METRICS_URL=none` until home-servers' `vmauth_devices` has the key).
+5. Key image: `NPM_ENVIRONMENT=prod KEYSTORE=atecc esp32s3/build.sh`, then
+   `NPM_ENVIRONMENT=prod ESPTOOL_BEFORE=default_reset esp32s3/flash-manual.sh PORT tinycrypt-prod-key-N`.
+   After this the port is the FIDO device; reflash by holding BOOT while plugging in.
+6. Check it's online (it sends `version` on connect; Fleet prod lists it), enrol the watch (hold BOOT
+   5 s, "Enrol with key"; a watch that knew this board before must forget it first), `hw_smoke.py`.
+7. From then on, updates come from Fleet prod (CI publishes ATECC builds on merge once
+   `FIRMWARE_KEYSTORE` is `atecc`).
+
 ## As built, against DESIGN.md
 
 - **21 × 34.95 mm.** The board ends at the antenna boundary, so the antenna strip overhangs and
