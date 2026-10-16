@@ -131,7 +131,14 @@ def main():
     elif cmd == "lock":
         lock(port)
     elif cmd == "check" and len(sys.argv) in (3, 4):
-        check(port, len(sys.argv) == 4 and sys.argv[3] == "full")
+        full = len(sys.argv) == 4 and sys.argv[3] == "full"
+        if full:
+            info = command(port, "info")
+            print("`check full` rolls the master secret: every credential made with this chip is lost.")
+            typed = input(f"Type the serial ({info['serial']}) to go on (sacrificial chip only): ").strip()
+            if typed.lower() != info["serial"].lower():
+                sys.exit("not checked")
+        check(port, full)
     elif cmd == "csr" and len(sys.argv) == 5:
         csr(port, sys.argv[3], sys.argv[4])
     else:

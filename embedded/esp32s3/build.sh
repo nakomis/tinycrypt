@@ -5,8 +5,9 @@
 #   esp32s3/build.sh provisioner     the provisioner image (CRYPT-22) in build-provisioner/
 # KEYSTORE picks the secure element (CRYPT-22): soft (the default, INSECURE, TEST ONLY: its secrets
 # sit in plain NVS) or atecc (the ATECC608B). An image is built for one or the other.
-# BOARD=cam adds sdkconfig.board-cam.defaults (the camera dev board's pins). Defaults only apply to
-# a fresh sdkconfig, so a BOARD build starts from one (sdkconfig / build-provisioner/sdkconfig removed).
+# BOARD=cam adds sdkconfig.board-cam.defaults (the camera dev board's pins); no BOARD is the PCB.
+# Defaults only apply to a fresh sdkconfig, so when the board differs from the last build's
+# (remembered next to its sdkconfig, in .board) that sdkconfig is removed first.
 # Images must be signed (CRYPT-14), so don't flash with `idf.py flash`: it would write the unsigned one.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -21,25 +22,32 @@ case "${KEYSTORE:-soft}" in
 esac
 
 defaults="sdkconfig.defaults"
-board=()
 if [ -n "${BOARD:-}" ]; then
     [ -f "sdkconfig.board-$BOARD.defaults" ] || { echo "no sdkconfig.board-$BOARD.defaults" >&2; exit 2; }
     defaults="$defaults;sdkconfig.board-$BOARD.defaults"
-    board=("-DSDKCONFIG_DEFAULTS=$defaults")
 fi
+# switch_board SDKCONFIG: start from a fresh sdkconfig if it was made for another board
+switch_board() {
+    local marker
+    marker="$(dirname "$1")/.board"
+    [ "$(cat "$marker" 2>/dev/null || true)" = "${BOARD:-pcb}" ] && return 0
+    rm -f "$1"
+    mkdir -p "$(dirname "$1")"
+    echo "${BOARD:-pcb}" > "$marker"
+}
 
 if [ "${1:-}" = provisioner ]; then
     shift
     # Its own build directory and sdkconfig, so it never mixes with the key's.
-    [ -n "${BOARD:-}" ] && rm -f build-provisioner/sdkconfig
+    switch_board build-provisioner/sdkconfig
     idf.py -B build-provisioner -DSDKCONFIG=build-provisioner/sdkconfig \
         "-DSDKCONFIG_DEFAULTS=$defaults;sdkconfig.provisioner.defaults" "${keystore[@]}" build
     ./sign.sh build-provisioner/tinycrypt.bin
     exit
 fi
+switch_board sdkconfig
 if [ $# -gt 0 ]; then
-    exec idf.py "${keystore[@]}" ${board[@]+"${board[@]}"} "$@"
+    exec idf.py "${keystore[@]}" "-DSDKCONFIG_DEFAULTS=$defaults" "$@"
 fi
-[ -n "${BOARD:-}" ] && rm -f sdkconfig
-idf.py "${keystore[@]}" ${board[@]+"${board[@]}"} build
+idf.py "${keystore[@]}" "-DSDKCONFIG_DEFAULTS=$defaults" build
 ./sign.sh build/tinycrypt.bin

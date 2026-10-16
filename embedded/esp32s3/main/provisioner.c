@@ -168,7 +168,8 @@ static void cmd_lock(const char *arg)
 // After locking: does the chip enforce what the configuration promises? Plain `check` is safe on
 // any provisioned chip (it bumps the sign counter by one). `check full` also tries what must be
 // refused (GenKey and PrivWrite on the key slots) and rolls the master secret: if one of those were
-// wrongly allowed it would replace a key, so run it on the sacrificial chip only.
+// wrongly allowed it would replace a key, so run it on the sacrificial chip only. Its atcab_* calls
+// skip se_atecc.c's mutex, which is fine here (the provisioner is one task); never in the key image.
 static int failures;
 static void expect(const char *what, bool ok)
 {

@@ -163,6 +163,8 @@ const char *se_backend(void)
 
 int se_serial(uint8_t serial[SE_SERIAL_LEN])
 {
+    if (lock == NULL)
+        return -1;  // se_atecc_open hasn't run
     return check("serial", WITH_LOCK(atcab_read_serial_number(serial)));
 }
 
@@ -219,14 +221,14 @@ static bool slot_ok(int slot)
 
 int se_sign(int slot, const uint8_t digest[32], uint8_t sig[SE_SIG_LEN])
 {
-    if (!slot_ok(slot))
+    if (lock == NULL || !slot_ok(slot))
         return -1;
     return check("sign", WITH_LOCK(atcab_sign((uint16_t)slot, digest, sig)));
 }
 
 int se_pubkey(int slot, uint8_t pub[SE_PUB_LEN])
 {
-    if (!slot_ok(slot))
+    if (lock == NULL || !slot_ok(slot))
         return -1;
     return check("pubkey", WITH_LOCK(atcab_get_pubkey((uint16_t)slot, pub)));
 }
