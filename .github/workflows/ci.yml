@@ -13,9 +13,10 @@ concurrency:
 
 env:
   AWS_REGION: eu-west-2
-  # CRYPT-20: which secure element the published firmware uses. Prod takes only ATECC builds; until
-  # the default is the ATECC (CRYPT-22, once key-1 has its chip), merges publish nothing to prod.
-  FIRMWARE_KEYSTORE: soft
+  # CRYPT-20: which secure element the published firmware uses. Prod takes only ATECC builds. ATECC
+  # since CRYPT-29 (16 Oct 2026): images use the PCB's pins, so the camera dev board (BOARD=cam) is
+  # updated by wire, never from these.
+  FIRMWARE_KEYSTORE: atecc
   ESPTOOL_VERSION: "4.12.0"  # ESP-IDF v5.5's
 
 jobs:
