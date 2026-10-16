@@ -59,12 +59,36 @@ Bridge EN to G to reset the chip.
 
 ## Ordering (JLCPCB)
 
-- **ENIG** finish, **black** solder mask, white silkscreen.
-- Edge rails on the **long sides only**, joined with **mouse-bite tabs, not V-cut**.
+First order, 16 Oct 2026: 5 boards, all assembled, about £110 with shipping, VAT and baking.
+
+- **Standard PCBA**, not Economic: Economic can't place the ESP32-S3-MINI-1 (pads underneath; X-ray
+  inspected) or the 2020 LED, and it allows neither OSP nor yellow. JLCPCB then adds its own edge rails
+  (the panel becomes 71 × 71 mm).
+- **OSP** finish (cheapest; flat enough for the module), yellow solder mask, white silkscreen (the
+  only one on yellow, so Mu is faint; black shows her best). 1.6 mm.
+- The BOM matcher may leave U1 (and D1) unticked with quantity 0: tick them. D1 (MSL 5) is baked
+  before reflow (accept the pop-up).
+- Check the rotations of J1, D1, U1, U2, U3 and U4 in the placement preview. D1 has no 3D model, so
+  compare its DI/−/+/DO markers with the pad nets in the `.kicad_pcb` (rotated 180°: DIN top-left,
+  GND top-right, 3V3 bottom-left, DOUT bottom-right).
+- Most of the price is per order (setup, stencil, a feeder fee per Extended part, X-ray), so 5 boards
+  cost little more than 2. Customs description: DIY Hobby Circuit Board. UK VAT is charged at checkout.
 - The module's antenna **overhangs the board edge by 5.05 mm on purpose** (marked on Dwgs.User).
-- Check the rotations of J1, D1, U1, U2, U3 and U4 in JLCPCB's placement preview.
+
+## Cable
+
+J1 is a JST **SH 1.0 mm** 5-pin socket: 1 VBUS, 2 D−, 3 D+, 4 CC, 5 GND. No cable is made in that exact
+order, but a "USB to SH1.0 5P" cable in micro-USB order (VBUS, D−, D+, ID, GND; sold as "forward wire
+order") fits as is, its unused ID on pin 4. It's USB-A, so a USB-C host needs a USB-C-to-A (OTG) adapter,
+whose plug carries the 5.1 kΩ on CC. Otherwise splice a USB cable to an SH1.0 5-pin pigtail (pigtail
+wire colours mean nothing: go by pin position; a USB-C plug needs CC wired to pin 4).
+
 - **Check the cable's pinout with a meter before the first plug-in.** There is no reverse-polarity
-  protection: J1 is 1 VBUS, 2 D-, 3 D+, 4 CC, 5 GND.
+  protection. (A breakout's ready-made JST lead turned out to be miswired, SDA on ground.)
+- An inline USB power meter on the first plug-in shows 5 V arriving and the current the key draws.
+
+**Next revision:** make J1 the common 4-pin SH1.0 order (VBUS, D−, D+, GND), with CC left to the
+cable's USB-C plug, so off-the-shelf "Type-C to SH1.0 4P" cables plug straight in.
 
 ## As built, against DESIGN.md
 
