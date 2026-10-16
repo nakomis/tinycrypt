@@ -1,4 +1,8 @@
 {
-  "sandbox": ["key-1"],
-  "prod": []
+  "sandbox": [
+    "key-1"
+  ],
+  "prod": [
+    "key-1"
+  ]
 }
