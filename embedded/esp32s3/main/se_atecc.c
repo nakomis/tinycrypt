@@ -181,11 +181,20 @@ int se_random(uint8_t *out, size_t len)
     return 0;
 }
 
+// Slot 9's KeyConfig.ReqRandom covers the SHA command's HMAC mode too (found on the sacrificial
+// chip: without a fresh random nonce in TempKey the HMAC fails with an execution error). The nonce
+// only unlocks the command: the HMAC is of the slot's key and the message, so it doesn't change.
 int se_hmac(const uint8_t *msg, size_t len, uint8_t mac[SE_HMAC_LEN])
 {
+    uint8_t num_in[20] = {0}, rand_out[32];
     if (!ready || len > SE_HMAC_MAX)
         return -1;
-    return check("hmac", WITH_LOCK(atcab_sha_hmac(msg, len, ATECC_SLOT_MASTER, mac, SHA_MODE_TARGET_OUT_ONLY)));
+    xSemaphoreTake(lock, portMAX_DELAY);
+    ATCA_STATUS s = atcab_nonce_rand(num_in, rand_out);
+    if (s == ATCA_SUCCESS)
+        s = atcab_sha_hmac(msg, len, ATECC_SLOT_MASTER, mac, SHA_MODE_TARGET_OUT_ONLY);
+    xSemaphoreGive(lock);
+    return check("hmac", s);
 }
 
 // DeriveKey(Roll): slot 9 = SHA-256(slot 9, opcode, mode, slot, SN, TempKey), TempKey being a
