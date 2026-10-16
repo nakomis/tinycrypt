@@ -165,6 +165,74 @@ static void cmd_lock(const char *arg)
     printf("TCPROV {\"locked\":true}\n");
 }
 
+// After locking: does the chip enforce what the configuration promises? Plain `check` is safe on
+// any provisioned chip (it bumps the sign counter by one). `check full` also tries what must be
+// refused (GenKey and PrivWrite on the key slots) and rolls the master secret: if one of those were
+// wrongly allowed it would replace a key, so run it on the sacrificial chip only.
+static int failures;
+static void expect(const char *what, bool ok)
+{
+    printf("TCPROV {\"check\":\"%s\",\"ok\":%s}\n", what, ok ? "true" : "false");
+    if (!ok)
+        failures++;
+}
+
+static void cmd_check(const char *arg)
+{
+    const bool full = strcmp(arg, "full") == 0;
+    failures = 0;
+    expect("provisioned (se_init)", se_init() == 0);
+    if (failures) {
+        error("not provisioned: nothing else checked");
+        return;
+    }
+    uint8_t buf[32], pub[SE_PUB_LEN], sig[SE_SIG_LEN], digest[32];
+    expect("slot 9 refuses a read", atcab_read_zone(ATCA_ZONE_DATA, ATECC_SLOT_MASTER, 0, 0, buf, 32) != ATCA_SUCCESS);
+
+    for (int slot = SE_SLOT_IOT; slot <= SE_SLOT_ATTEST; slot++) {
+        bool verified = false;
+        memset(digest, slot ? 0x5a : 0xa5, sizeof(digest));
+        bool ok = se_pubkey(slot, pub) == 0 && se_sign(slot, digest, sig) == 0 &&
+                  atcab_verify_extern(digest, sig, pub, &verified) == ATCA_SUCCESS && verified;
+        expect(slot ? "slot 1 signs, verifies against its public key" : "slot 0 signs, verifies against its public key", ok);
+    }
+
+    static const uint8_t msg_a[] = "tinycrypt check a", msg_b[] = "tinycrypt check b";
+    uint8_t a1[SE_HMAC_LEN], a2[SE_HMAC_LEN], b[SE_HMAC_LEN];
+    bool hmac_ok = se_hmac(msg_a, sizeof(msg_a), a1) == 0 && se_hmac(msg_a, sizeof(msg_a), a2) == 0 &&
+                   se_hmac(msg_b, sizeof(msg_b), b) == 0;
+    expect("HMAC on slot 9 works (ReqRandom set)", hmac_ok);
+    expect("HMAC is the same across fresh nonces", hmac_ok && memcmp(a1, a2, sizeof(a1)) == 0);
+    expect("HMAC differs for another message", hmac_ok && memcmp(a1, b, sizeof(a1)) != 0);
+
+    uint8_t r1[32], r2[32], ff[32];
+    memset(ff, 0xff, sizeof(ff));
+    bool rnd = se_random(r1, sizeof(r1)) == 0 && se_random(r2, sizeof(r2)) == 0;
+    expect("random numbers are random (not the unlocked chip's fixed pattern)",
+           rnd && memcmp(r1, r2, sizeof(r1)) != 0 && memcmp(r1, ff, sizeof(r1)) != 0);
+
+    uint32_t before = 0, after = 0;
+    bool counted = atcab_counter_read(ATECC_SIGN_COUNTER, &before) == ATCA_SUCCESS && se_counter_increment(&after) == 0;
+    printf("TCPROV {\"counter_before\":%lu}\n", (unsigned long)before);
+    expect("sign counter increments by one", counted && after == before + 1);
+
+    if (full) {
+        uint8_t newpub[SE_PUB_LEN], key[36] = {0};  // PrivWrite takes 4 pad bytes + the 32-byte key
+        for (int slot = SE_SLOT_IOT; slot <= SE_SLOT_ATTEST; slot++) {
+            se_pubkey(slot, pub);
+            expect(slot ? "slot 1 refuses GenKey" : "slot 0 refuses GenKey", atcab_genkey((uint16_t)slot, newpub) != ATCA_SUCCESS);
+            expect(slot ? "slot 1 refuses PrivWrite" : "slot 0 refuses PrivWrite",
+                   atcab_priv_write((uint16_t)slot, key, 0, NULL, NULL) != ATCA_SUCCESS);
+            expect(slot ? "slot 1 key unchanged" : "slot 0 key unchanged",
+                   se_pubkey(slot, newpub) == 0 && memcmp(pub, newpub, sizeof(pub)) == 0);
+        }
+        uint8_t rolled[SE_HMAC_LEN];
+        bool roll = se_master_roll() == 0 && se_hmac(msg_a, sizeof(msg_a), rolled) == 0;
+        expect("DeriveKey roll works and changes the HMAC", roll && memcmp(a1, rolled, sizeof(a1)) != 0);
+    }
+    printf("TCPROV {\"checked\":true,\"failures\":%d}\n", failures);
+}
+
 #else
 
 static void cmd_info(void)
@@ -248,7 +316,14 @@ void app_main(void)
 
 #ifdef TINYCRYPT_KEYSTORE_ATECC
     if (se_atecc_open() != 0) {
-        error("no ATECC608 on the bus (wiring, address?)");
+        // Every command needs the chip: refuse them all rather than fail later in cryptoauthlib.
+        char discard[200];
+        for (;;) {
+            error("no ATECC608 on the bus (wiring, address?)");
+            fflush(stdout);
+            while (fgets(discard, sizeof(discard), stdin) == NULL)
+                ;
+        }
     }
 #endif
     printf("TCPROV {\"ready\":true,\"backend\":\"%s\"}\n", se_backend());
@@ -264,8 +339,12 @@ void app_main(void)
             cmd_lock(line + 5);
         else if (strncmp(line, "csr ", 4) == 0)
             cmd_csr(line + 4);
+#ifdef TINYCRYPT_KEYSTORE_ATECC
+        else if (strcmp(line, "check") == 0 || strcmp(line, "check full") == 0)
+            cmd_check(line[5] ? line + 6 : "");
+#endif
         else if (line[0])
-            error("commands: info | lock <serial> | csr <thing>");
+            error("commands: info | lock <serial> | csr <thing> | check [full]");
         fflush(stdout);
     }
 }

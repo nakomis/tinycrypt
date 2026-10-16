@@ -5,6 +5,9 @@ native USB port (USB-Serial-JTAG).
     atecc_provision.py PORT info
     atecc_provision.py PORT lock            configure and lock the chip: PERMANENT, asks first
     atecc_provision.py PORT csr THING FILE  write the IoT key's CSR (PEM) for provision-key.sh --csr
+    atecc_provision.py PORT check [full]    after locking: does the chip enforce its configuration?
+                                            `full` also tries GenKey/PrivWrite on the key slots and
+                                            rolls the master secret: the sacrificial chip only
 
 Flash the provisioner first: KEYSTORE=atecc esp32s3/build.sh provisioner, then
 esp32s3/flash-manual.sh --provisioner PORT (no BOOT+RST needed over the native port). Run with ESP-IDF's Python (pyserial).
@@ -45,6 +48,8 @@ def wait_for_boot(port, quiet=2.0):
         raw = port.readline().decode(errors="replace").strip()
         if raw.startswith(PREFIX) and "ready" in raw:
             return
+        if raw.startswith(PREFIX) and "error" in raw:
+            sys.exit(f"provisioner: {json.loads(raw[len(PREFIX):])['error']}")
         if raw:
             deadline = time.monotonic() + quiet
 
@@ -86,6 +91,31 @@ def csr(port, thing, path):
     print(f"wrote {path} (IoT key {reply['iot_pub'][:16]}…)")
 
 
+def check(port, full):
+    port.reset_input_buffer()
+    port.write(("check full\n" if full else "check\n").encode())
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        raw = port.readline().decode(errors="replace").strip()
+        if not raw.startswith(PREFIX):
+            if raw:
+                print(f"  | {raw}", file=sys.stderr)
+            continue
+        reply = json.loads(raw[len(PREFIX):])
+        if "error" in reply:
+            sys.exit(f"provisioner: {reply['error']}")
+        if "check" in reply:
+            print(f"{'ok  ' if reply['ok'] else 'FAIL'}  {reply['check']}")
+        elif "counter_before" in reply:
+            print(f"      sign counter was {reply['counter_before']}")
+        elif "checked" in reply:
+            if reply["failures"]:
+                sys.exit(f"{reply['failures']} check(s) failed")
+            print("all checks passed")
+            return
+    sys.exit("no answer to check")
+
+
 def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
@@ -100,6 +130,8 @@ def main():
         show(command(port, "info"))
     elif cmd == "lock":
         lock(port)
+    elif cmd == "check" and len(sys.argv) in (3, 4):
+        check(port, len(sys.argv) == 4 and sys.argv[3] == "full")
     elif cmd == "csr" and len(sys.argv) == 5:
         csr(port, sys.argv[3], sys.argv[4])
     else:

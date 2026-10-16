@@ -91,14 +91,18 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   kept in NVS); a Nakomis CA version is CRYPT-25. **ATECC configuration** (`atecc_config.h`, checked bit by
   bit by `tests/test_atecc_config.py` against the 608A datasheet's tables): slots 0–7 P-256, external
   sign only, GenKey yes, PrivWrite no (0 IoT, 1 attestation, 2–7 spare for per-site keys later); 9 the
-  master secret (never readable, Write never, DeriveKey Roll without MAC, ReqRandom); the rest inert;
+  master secret (never readable, Write never, DeriveKey Roll without MAC, ReqRandom: which covers the SHA command's HMAC too, so `se_hmac` loads a random nonce first); the rest inert;
   sign counter = Counter[1]. **Provisioning** is a separate image (`build.sh provisioner`,
   `flash-manual.sh --provisioner`, then `esp32s3/tools/atecc_provision.py PORT info|lock|csr`; its console is
   the native USB-Serial-JTAG port, so `ESPTOOL_BEFORE=default_reset` flashes it, and the key image after it,
   with no BOOT+RST):
   `lock` asks for the chip's serial to be typed, writes the configuration, checks it read back, locks it
   by CRC, writes the master secret from the chip's RNG, locks data, GenKeys 0 and 1; `csr` gives the IoT
-  CSR for `provision-key.sh key-N --csr FILE` (create-certificate-from-csr; no private key anywhere).
+  CSR for `provision-key.sh key-N --csr FILE` (create-certificate-from-csr; no private key anywhere). `check` then confirms the chip enforces its
+  configuration (`check full`, sacrificial chip only, also tries GenKey/PrivWrite on the key slots and a
+  roll). Proven on a 608A clone (16 Oct). The camera dev board ("WROOM CAM") holds GPIO38 (SD CMD) and
+  GPIO8 (camera) low, so it builds with `BOARD=cam` (SDA on 47, LED on 48); the breakouts' JST lead was
+  miswired, so wire to the header pads.
   **TLS:** esp-tls's own secure-element support re-inits and releases cryptoauthlib and routes all ECDSA
   verifies to the chip, so it's off; instead `se_tls.c` hands esp-mqtt a PEM whose scalar is a public
   marker, and `CONFIG_MBEDTLS_ATCA_HW_ECDSA_SIGN` routes every mbedTLS ECDSA signature to our
