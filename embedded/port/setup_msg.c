@@ -186,13 +186,30 @@ static int stronger_first(const void *a, const void *b)
     return ((const setup_network_t *)b)->rssi - ((const setup_network_t *)a)->rssi;
 }
 
+// An SSID is any 32 bytes; the app's JSON parser needs UTF-8, so one odd network would spoil the list.
+static bool valid_utf8(const char *s)
+{
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p)
+    {
+        int extra = *p < 0x80 ? 0 : (*p & 0xe0) == 0xc0 ? 1 : (*p & 0xf0) == 0xe0 ? 2 : (*p & 0xf8) == 0xf0 ? 3 : -1;
+        if (extra < 0 || (extra == 1 && *p < 0xc2))
+            return false;
+        p++;
+        for (int i = 0; i < extra; i++, p++)
+            if ((*p & 0xc0) != 0x80)
+                return false;
+    }
+    return true;
+}
+
 size_t setup_scan_tidy(setup_network_t *nets, size_t n)
 {
     qsort(nets, n, sizeof(*nets), stronger_first);
     size_t kept = 0;
     for (size_t i = 0; i < n; i++)
     {
-        if (nets[i].ssid[0] == 0)
+        if (nets[i].ssid[0] == 0 || !valid_utf8(nets[i].ssid))
             continue;
         bool seen = false;
         for (size_t j = 0; j < kept && !seen; j++)

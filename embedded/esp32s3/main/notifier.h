@@ -47,3 +47,6 @@ setup_wifi_state_t notifier_wifi_info(char ssid[SETUP_SSID_MAX + 1]);
 // Keeps an enrolled device's APNs token until IoT Core has it, relaying it to
 // tinycrypt/{env}/register/{thing} for the register Lambda (now, or on the next connection).
 bool notifier_register(const setup_register_t *reg);
+// The key forgot its device of this kind (replaced by a new one, or moved to the other kind): stop
+// pushing to it, unless that kind registers again first.
+void notifier_deregister(setup_kind_t kind);

@@ -68,8 +68,8 @@ CTX = types.SimpleNamespace(invoked_function_arn=f"{PREFIX}function:tinycrypt-re
 TOKEN_A, TOKEN_B = "a" * 64, "b" * 64
 
 
-def reg(thing, kind, token):
-    register.handler({"thing": thing, "kind": kind, "token": token}, CTX)
+def reg(thing, kind, token, client=None):
+    register.handler({"thing": thing, "kind": kind, "token": token, "client": client or thing}, CTX)
 
 
 def endpoint_for(sns, kind, token):
@@ -108,6 +108,26 @@ def test_one_watch_on_two_keys_survives_replacement_on_one(sns):
     assert sns.topics_of(endpoint_for(sns, "watch", TOKEN_B)) == ["tinycrypt-sandbox-key-1"]
 
 
+def test_empty_token_deregisters_that_kind_only(sns):
+    reg("tinycrypt-sandbox-key-1", "watch", TOKEN_A)
+    reg("tinycrypt-sandbox-key-1", "phone", TOKEN_B)
+    reg("tinycrypt-sandbox-key-1", "phone", "")
+    assert sns.topics_of(endpoint_for(sns, "watch", TOKEN_A)) == ["tinycrypt-sandbox-key-1"]
+    assert not any("phone" in app for app, _ in sns.endpoints.values())   # unused, so deleted
+
+
+def test_deregistering_keeps_an_endpoint_another_key_uses(sns):
+    reg("tinycrypt-sandbox-key-1", "watch", TOKEN_A)
+    reg("tinycrypt-sandbox-key-2", "watch", TOKEN_A)
+    reg("tinycrypt-sandbox-key-1", "watch", "")
+    assert sns.topics_of(endpoint_for(sns, "watch", TOKEN_A)) == ["tinycrypt-sandbox-key-2"]
+
+
+def test_another_keys_client_cant_register_for_this_key(sns):
+    reg("tinycrypt-sandbox-key-1", "phone", TOKEN_A, client="tinycrypt-sandbox-key-2")
+    assert not sns.subs and not sns.endpoints
+
+
 @pytest.mark.parametrize("event", [
     {"thing": "tinycrypt-prod-key-1", "kind": "phone", "token": TOKEN_A},     # another environment
     {"thing": "someone-else", "kind": "phone", "token": TOKEN_A},
@@ -115,7 +135,9 @@ def test_one_watch_on_two_keys_survives_replacement_on_one(sns):
     {"thing": "tinycrypt-sandbox-key-1", "kind": "phone", "token": "not hex"},
     {"thing": "tinycrypt-sandbox-key-1", "kind": "phone", "token": "ab"},       # too short
     {"thing": "tinycrypt-sandbox-key-1", "kind": "phone"},
+    {"thing": "tinycrypt-sandbox-key-1", "kind": ["phone"], "token": TOKEN_A},
+    {"thing": "tinycrypt-sandbox-key-1", "kind": "phone", "token": 5},
 ])
 def test_refuses_bad_registrations(sns, event):
-    register.handler(event, CTX)
+    register.handler({"client": event.get("thing"), **event}, CTX)
     assert not sns.subs and not sns.endpoints

@@ -92,7 +92,7 @@ export class KeyStack extends cdk.Stack {
             });
             topic.grantPublish(ruleRole);
             new iot.CfnTopicRule(this, `PresenceRule-${name}`, {
-                ruleName: `tinycrypt_presence_${deployEnv}_${name.replace('-', '_')}`,
+                ruleName: `tinycrypt_presence_${deployEnv}_${name.replace(/-/g, '_')}`,
                 topicRulePayload: {
                     sql: `SELECT * FROM 'tinycrypt/${deployEnv}/presence/${thingName}/request'`,
                     actions: [{ sns: { targetArn: topic.topicArn, roleArn: ruleRole.roleArn, messageFormat: 'JSON' } }],
@@ -156,8 +156,9 @@ export class KeyStack extends cdk.Stack {
         const registerRule = new iot.CfnTopicRule(this, 'RegisterRule', {
             ruleName: `tinycrypt_register_${deployEnv}`,
             topicRulePayload: {
-                // The Thing comes from the topic, which the key's policy limits to its own name.
-                sql: `SELECT *, topic(4) AS thing FROM 'tinycrypt/${deployEnv}/register/+'`,
+                // Named fields only, so a payload can't carry its own "thing": the Thing comes from the
+                // topic, which the key's policy limits to its own name, and the client id must agree.
+                sql: `SELECT kind, token, topic(4) AS thing, clientid() AS client FROM 'tinycrypt/${deployEnv}/register/+'`,
                 actions: [{ lambda: { functionArn: register.functionArn } }],
                 ruleDisabled: false,
                 awsIotSqlVersion: '2016-03-23',

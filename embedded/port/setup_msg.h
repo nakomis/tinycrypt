@@ -81,8 +81,8 @@ const char *setup_wifi_state_name(setup_wifi_state_t state);
 int setup_info_json(const setup_info_t *info, char out[SETUP_READ_MAX + 1]);
 int setup_scan_json(const setup_network_t *nets, size_t n, char out[SETUP_READ_MAX + 1]);
 
-// Sort a scan strongest first and keep each SSID once (its strongest), hidden ones dropped. Returns
-// the new count.
+// Sort a scan strongest first and keep each SSID once (its strongest), hidden ones and ones that
+// aren't UTF-8 dropped. Returns the new count.
 size_t setup_scan_tidy(setup_network_t *nets, size_t n);
 
 // The IoT payload that relays a registration to the register Lambda (malloc'd, or NULL).

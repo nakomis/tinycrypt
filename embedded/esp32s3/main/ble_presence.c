@@ -252,6 +252,24 @@ static bool forget(approver_t *a)
     return ok;
 }
 
+// Bonds from devices that paired in an enrol window but never enrolled (a cancelled setup) would pile
+// up, and a full store evicts the oldest bond, which may be an approver's: keep only the approvers'.
+static void delete_stray_bonds(void)
+{
+    ble_addr_t peers[CONFIG_BT_NIMBLE_MAX_BONDS];
+    int n = 0;
+    if (ble_store_util_bonded_peers(peers, &n, CONFIG_BT_NIMBLE_MAX_BONDS) != 0)
+        return;
+    for (int i = 0; i < n; i++)
+    {
+        bool keep = false;
+        for (int k = 0; k < 2; k++)
+            keep |= approvers[k].have_peer && ble_addr_cmp(&approvers[k].peer, &peers[i]) == 0;
+        if (!keep)
+            ble_store_util_delete_peer(&peers[i]);
+    }
+}
+
 // The write is X||Y (64 bytes: a watch, as before CRYPT-30) or kind (1 watch, 2 phone) || X||Y.
 static int enrol(uint16_t conn, const uint8_t *buf, size_t len)
 {
@@ -290,12 +308,7 @@ static int enrol(uint16_t conn, const uint8_t *buf, size_t len)
         return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
     }
     approver_t *a = &approvers[kind], *other = &approvers[1 - kind];
-    if (a->have_peer && ble_addr_cmp(&a->peer, &desc.peer_id_addr) != 0 &&
-        !(other->have_peer && ble_addr_cmp(&other->peer, &a->peer) == 0))
-        ble_store_util_delete_peer(&a->peer);
-    // One device is one approver: enrolling as the other kind moves it.
-    if (other->have_peer && ble_addr_cmp(&other->peer, &desc.peer_id_addr) == 0)
-        forget(other);
+    // The new slot is written first, so a failure here loses nothing.
     nvs_handle_t nvs;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK)
         return BLE_ATT_ERR_UNLIKELY;
@@ -307,10 +320,30 @@ static int enrol(uint16_t conn, const uint8_t *buf, size_t len)
     nvs_close(nvs);
     if (err != ESP_OK)
         return BLE_ATT_ERR_UNLIKELY;
+    bool replaced = a->have_pub && !(a->have_peer && ble_addr_cmp(&a->peer, &desc.peer_id_addr) == 0);
+    ble_addr_t old_peer = a->peer;
+    bool had_peer = a->have_peer;
     memcpy(a->pub, pub, len);
     a->have_pub = true;
     a->peer = desc.peer_id_addr;
     a->have_peer = true;
+    // One device is one approver: enrolling as the other kind moves it.
+    bool moved = other->have_peer && ble_addr_cmp(&other->peer, &desc.peer_id_addr) == 0;
+    if (moved)
+        forget(other);
+    // The replaced device goes: its bond (unless it's the other approver too), and its pushes.
+    if (had_peer && ble_addr_cmp(&old_peer, &desc.peer_id_addr) != 0 &&
+        !(other->have_peer && ble_addr_cmp(&other->peer, &old_peer) == 0))
+        ble_store_util_delete_peer(&old_peer);
+    delete_stray_bonds();
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+    if (replaced)
+        notifier_deregister(kind);
+    if (moved)
+        notifier_deregister((setup_kind_t)(1 - kind));
+#else
+    (void)replaced;
+#endif
     allow_conn(conn, true);
     extend_connection(conn);  // the app goes on to register and set Wi-Fi
     taskENTER_CRITICAL(&lock);
@@ -543,7 +576,7 @@ static void drop_connection(void *arg)
 {
     uint16_t handle = slot_conn[(uintptr_t)arg];
     if (handle != NO_CONN && ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM) == 0)
-        ESP_LOGI(TAG, "connection %u dropped after %d s", handle, (int)(CONNECTION_LIMIT_US / 1000000));
+        ESP_LOGI(TAG, "connection %u dropped at its time limit", handle);
 }
 
 static void connection_opened(uint16_t handle)

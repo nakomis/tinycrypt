@@ -134,6 +134,13 @@ def test_scan_sorted_deduplicated_hidden_dropped():
     assert out == [["Cafe", -40, 0], ["Home", -50, 1]]
 
 
+def test_scan_keeps_multibyte_utf8_ssids():
+    # The sim reads its input as JSON, so it can't be fed an SSID that isn't UTF-8 (only the radio
+    # can); this checks the UTF-8 filter keeps valid multi-byte names.
+    out = run("scan", [["Café", -40, 1], ["日本", -50, 1]])[0]
+    assert out == [["Café", -40, 1], ["日本", -50, 1]]
+
+
 def test_scan_keeps_twelve():
     out = run("scan", [[f"net{i}", -30 - i, 1] for i in range(20)])[0]
     assert [n[0] for n in out] == [f"net{i}" for i in range(12)]

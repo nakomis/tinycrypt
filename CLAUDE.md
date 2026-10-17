@@ -58,11 +58,11 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
 - **Watch over BLE on the key** (`esp32s3/main/ble_presence.c`, NimBLE, `CONFIG_TINYCRYPT_WATCH_BLE`): the
   key advertises the protocol GATT service; a challenge is
   readable during a wait (and up to 3 s after, for U2F re-asks) and approves once. **Bonded** (CRYPT-19):
-  LE Secure Connections, Just Works, bonds in NVS (two at most); the challenge, response and telemetry
-  characteristics need an encrypted link, and only the enrolled watch's identity address (`watch_peer`)
-  may use it: any other bond is deleted and the link dropped, and repeat pairing is only allowed in the
-  enrol window. Connections are still dropped after 10 s and two are allowed (a squatter can't lock the
-  watch out). **Enrol:** hold BOOT 5 s while idle (not at power-up: that's download mode) for a 60 s
+  LE Secure Connections, Just Works, bonds in NVS (four at most since CRYPT-30); the challenge, response and
+  telemetry characteristics need an encrypted link, and only an enrolled device's identity address
+  (`watch_peer`, `phone_peer`) may use it: any other bond is deleted and the link dropped, and repeat
+  pairing is only allowed in the enrol window. Connections are dropped after 10 s (an enrolled device's
+  own after 60 s, for setup) and two are allowed (a squatter can't lock the watch out). **Enrol:** hold BOOT 5 s while idle (not at power-up: that's download mode) for a 60 s
   window; the watch taps "Enrol with key" and accepts the pairing request (enrolment needs the bonded
   link). A watch enrolled before bonding must enrol again. Its public key is in NVS
   (`watch_pub`), so reflashing keeps it. Wi-Fi runs modem sleep alongside BLE (ESP-IDF requires it).
@@ -293,7 +293,13 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   bonds up to 4. Enrolled devices get `info` (read), `wifi` (join or scan; read the scan) and `register`
   characteristics, and 60 s connections (others 10 s). Wi-Fi from the app is kept in NVS (`wifi`
   namespace) and wins over `prov`'s, which is optional (`provision-key.sh --no-wifi`); it applies at once.
-  A device can only register its own kind's token.
+  A device can only register its own kind's token. An approver is removed by enrolling a replacement of
+  its kind (or moving that device to the other kind): the key forgets it, deletes its bond and stray
+  ones, and deregisters it (an empty token, so the Lambda unsubscribes that kind). A CTAP reset doesn't
+  clear approvers. The register rule selects named fields only and passes `clientid()`, which the Lambda
+  requires to be the Thing. A scan pauses the Wi-Fi retries (ESP-IDF won't scan while joining).
+  Bonded devices that knew the key before this firmware may have cached its old GATT table: enrol
+  them again to see `info`/`wifi`/`register`.
 - **APNs key**: the live team-scoped key is **`25Z7VVWUQW`** (sandbox and production). tinycrypt keeps
   its own copy in SSM at `/tinycrypt/{env}/apns/{team-id,key-id,private-key}`, put there by hand.
   `VH26CFZ5GD`, still named in the cert portal's `/home-certs/*/apns/key-id`, is revoked (APNs says

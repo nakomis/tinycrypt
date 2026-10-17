@@ -149,6 +149,8 @@ static void scan_done(void)
     free(recs);
     free(nets);
     ESP_LOGI(TAG, "Wi-Fi scan: %u networks", (unsigned)kept);
+    if (wifi_state != SETUP_WIFI_CONNECTED && wifi_state != SETUP_WIFI_UNSET)
+        esp_timer_start_once(wifi_retry, (uint64_t)WIFI_RETRY_MIN_MS * 1000);
 }
 
 static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -160,11 +162,10 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         uint8_t reason = ((wifi_event_sta_disconnected_t *)data)->reason;
         // MQTT only notices a dead socket at its next keepalive; stop queueing into it now.
         mqtt_connected = false;
-        if (reconfiguring && reason == WIFI_REASON_ASSOC_LEAVE)
-        {
-            reconfiguring = false;  // notifier_set_wifi left the old network and is joining the new
-            return;
-        }
+        bool ours = reconfiguring && reason == WIFI_REASON_ASSOC_LEAVE;
+        reconfiguring = false;
+        if (ours)
+            return;  // notifier_set_wifi (or a scan) left the old network itself: no back-off
         switch (reason)
         {
         case WIFI_REASON_AUTH_FAIL:
@@ -180,14 +181,17 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
             wifi_state = SETUP_WIFI_NOT_FOUND;
             break;
         default:
-            if (wifi_state != SETUP_WIFI_UNSET)
-                wifi_state = SETUP_WIFI_CONNECTING;  // it keeps retrying
+            // It keeps retrying. A wrong password or a missing network stays reported until it joins
+            // or is given another, so the app sees it even if a later attempt fails differently.
+            if (wifi_state == SETUP_WIFI_CONNECTED)
+                wifi_state = SETUP_WIFI_CONNECTING;
             break;
         }
         if (ever_connected || connect_overdue)
             led_status_set(LED_OFFLINE, true);
         ESP_LOGW(TAG, "Wi-Fi disconnected (reason %d), retrying in %" PRIu32 " ms", reason, wifi_retry_ms);
-        esp_timer_start_once(wifi_retry, (uint64_t)wifi_retry_ms * 1000);
+        if (!scanning)  // a scan restarts the retries when it's done
+            esp_timer_start_once(wifi_retry, (uint64_t)wifi_retry_ms * 1000);
         wifi_retry_ms = wifi_retry_ms * 2 > WIFI_RETRY_MAX_MS ? WIFI_RETRY_MAX_MS : wifi_retry_ms * 2;
     }
     else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE)
@@ -611,14 +615,25 @@ bool notifier_scan_wifi(void)
 {
     if (!wifi_started || scanning)
         return wifi_started;
+    // ESP-IDF won't scan while the station is trying to join, which is just when the app asks (the
+    // network is wrong or missing): pause the retries and stop the attempt; scan_done resumes them.
+    scanning = true;
+    esp_timer_stop(wifi_retry);
+    if (wifi_state != SETUP_WIFI_CONNECTED && wifi_state != SETUP_WIFI_UNSET)
+    {
+        reconfiguring = true;
+        esp_wifi_disconnect();
+    }
     const wifi_scan_config_t config = {.show_hidden = false};
     esp_err_t err = esp_wifi_scan_start(&config, false);  // SCAN_DONE arrives in wifi_event
     if (err != ESP_OK)
     {
         ESP_LOGW(TAG, "Wi-Fi scan: %s", esp_err_to_name(err));
+        scanning = false;
+        if (wifi_state != SETUP_WIFI_CONNECTED && wifi_state != SETUP_WIFI_UNSET)
+            esp_timer_start_once(wifi_retry, (uint64_t)WIFI_RETRY_MIN_MS * 1000);
         return false;
     }
-    scanning = true;
     return true;
 }
 
@@ -687,7 +702,13 @@ static void registration_acked(setup_kind_t kind)
 
 bool notifier_register(const setup_register_t *reg)
 {
-    // Kept until IoT Core acknowledges it: a new key usually has no Wi-Fi when it's enrolled.
+    if (register_topic[0] == 0)
+    {
+        ESP_LOGE(TAG, "no register topic (prov's topic isn't tinycrypt/{env}/presence/...): can't register");
+        return false;
+    }
+    // Kept until IoT Core acknowledges it: a new key usually has no Wi-Fi when it's enrolled. An
+    // empty token deregisters the kind (notifier_deregister).
     nvs_handle_t h;
     esp_err_t err = nvs_open(REGISTER_NVS, NVS_READWRITE, &h);
     if (err == ESP_OK)
@@ -704,4 +725,11 @@ bool notifier_register(const setup_register_t *reg)
     }
     publish_registration(reg->kind);
     return true;
+}
+
+void notifier_deregister(setup_kind_t kind)
+{
+    setup_register_t reg = {.kind = kind};  // token "": the register Lambda unsubscribes this kind
+    if (prov_loaded)
+        notifier_register(&reg);
 }
