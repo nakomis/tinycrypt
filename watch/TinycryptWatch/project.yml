@@ -1,9 +1,9 @@
-# Watch-only spike app for CRYPT-11. Generate with `xcodegen generate`; the
-# .xcodeproj is not committed.
+# tinycrypt's Apple apps. Generate with `xcodegen generate`; the .xcodeproj is not committed.
 #
-# Laid out like Xcode's "Watch-only App" template: the App Store (and TestFlight)
-# takes an iOS stub (watchapp2-container) that embeds the real watch app. Archive
-# the TinycryptWatch scheme; it has no iPhone UI and never installs on the phone.
+# CRYPT-30: the iPhone and iPad app (bundle com.nakomis.tinycrypt.watch: the same App Store app as the
+# watch-only stub it replaces) carries the watch app, which still runs on its own. Archive the
+# TinycryptWatch scheme. Shared/ (the BLE protocol, the Secure Enclave key, the notification) is
+# compiled into both.
 name: TinycryptWatch
 options:
   bundleIdPrefix: com.nakomis.tinycrypt
@@ -18,23 +18,48 @@ settings:
     MARKETING_VERSION: "0.1"
     CURRENT_PROJECT_VERSION: "2"
 targets:
-  # The iOS stub: what gets uploaded. No sources of its own.
+  # The iPhone and iPad app: what gets uploaded.
   TinycryptWatch:
-    type: application.watchapp2-container
+    type: application
     platform: iOS
+    sources: [iOS, Shared, Resources/Assets.xcassets]
     dependencies:
       - target: TinycryptWatchApp
+    entitlements:
+      path: Resources/TinycryptPhone.entitlements
+      properties:
+        # Development builds get pushes from the APNs sandbox; CI switches it for TestFlight.
+        aps-environment: development
+    info:
+      path: Resources/Info-iOS.plist
+      properties:
+        CFBundleDisplayName: tinycrypt
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
+        NSBluetoothAlwaysUsageDescription: tinycrypt talks to your security key over Bluetooth to set it up and approve sign-ins.
+        # Approving from a notification connects to the key with the app in the background.
+        UIBackgroundModes: [bluetooth-central, remote-notification]
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UISupportedInterfaceOrientations~ipad:
+          [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown,
+           UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
     settings:
       base:
+        PRODUCT_NAME: tinycrypt
         PRODUCT_BUNDLE_IDENTIFIER: com.nakomis.tinycrypt.watch
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: tinycrypt
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
-  # The watch app itself.
+  # The watch app.
   TinycryptWatchApp:
     type: application
     platform: watchOS
-    sources: [Sources, Resources/Assets.xcassets]
+    sources: [Sources, Shared, Resources/Assets.xcassets]
     entitlements:
       path: Resources/TinycryptWatch.entitlements
       properties:
@@ -49,7 +74,9 @@ targets:
         # Standard crypto only (ECDSA signatures): exempt from export documentation.
         ITSAppUsesNonExemptEncryption: false
         WKApplication: true
-        WKWatchOnly: true
+        # CRYPT-30: shipped inside the iPhone app now, but needs nothing from it.
+        WKCompanionAppBundleIdentifier: com.nakomis.tinycrypt.watch
+        WKRunsIndependentlyOfCompanionApp: true
         NSBluetoothAlwaysUsageDescription: tinycrypt talks to your security key over Bluetooth to approve sign-ins.
         UIBackgroundModes: [bluetooth-central]
     settings:
@@ -64,6 +91,8 @@ schemes:
       targets:
         TinycryptWatch: all
         TinycryptWatchApp: all
+    run:
+      config: Debug
     archive:
       config: Release
   # Runs the watch app directly on a watch from Xcode (Developer Mode needed).

@@ -18,6 +18,12 @@ enum KeyStore {
         return key
     }
 
+    /// The key this device enrolled with, without making one: a phone restored from a backup has the
+    /// app's settings but not its Secure Enclave key, and a new key would just be refused by the key.
+    static func existingKey() -> SecureEnclave.P256.Signing.PrivateKey? {
+        load().flatMap { try? SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: $0) }
+    }
+
     /// X‖Y (64 bytes): x963Representation without the leading 0x04.
     static func publicKeyXY(_ key: SecureEnclave.P256.Signing.PrivateKey) -> Data {
         key.publicKey.x963Representation.dropFirst()

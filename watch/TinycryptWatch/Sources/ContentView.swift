@@ -28,6 +28,17 @@ struct ContentView: View {
         Task {
             let report = await PresenceClient(mode: .enrol, route: .scan, start: .now, context: [:]).run()
             model.record(report)
+            // CRYPT-30: sign this watch up for the key's own pushes, through the key.
+            if report.error == nil,
+               let id = UserDefaults.standard.string(forKey: PresenceClient.peripheralIDKey).flatMap(UUID.init),
+               let token = UserDefaults.standard.string(forKey: AppModel.pushTokenKey) {
+                do {
+                    try await KeyActions.register(key: id, as: .watch, token: token)
+                    model.record("registered for this key's pushes")
+                } catch {
+                    model.record("push registration failed: \(error.localizedDescription)")
+                }
+            }
             busy = false
         }
     }
