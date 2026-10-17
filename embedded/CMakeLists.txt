@@ -38,3 +38,7 @@ target_compile_options(tinycrypt-metricsline PRIVATE -Wall -Wextra -Werror)
 add_executable(tinycrypt-otacmd sim/otacmd_main.c)
 target_link_libraries(tinycrypt-otacmd PRIVATE tinycrypt_port)
 target_compile_options(tinycrypt-otacmd PRIVATE -Wall -Wextra -Werror)
+
+add_executable(tinycrypt-setupmsg sim/setupmsg_main.c)
+target_link_libraries(tinycrypt-setupmsg PRIVATE tinycrypt_port)
+target_compile_options(tinycrypt-setupmsg PRIVATE -Wall -Wextra -Werror)

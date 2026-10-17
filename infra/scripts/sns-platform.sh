@@ -2,35 +2,48 @@
 # CRYPT-12: the SNS pieces CloudFormation can't make. Safe to re-run.
 #   1. The SNS platform application, holding the team-scoped APNs key (from SSM, never written
 #      to disk here), with delivery status logging.
-#   2. A platform endpoint for the watch's device token, subscribed to the presence topic.
+#   2. A platform endpoint for a device token, subscribed to a key's presence topic.
 #
-#   infra/scripts/sns-platform.sh <watch-device-token>
-#   infra/scripts/sns-platform.sh --app-only      just the platform application (CRYPT-26: prod, before
-#                                                 a TestFlight watch build has given it a token)
+#   infra/scripts/sns-platform.sh [--phone] --app-only
+#       just the platform application: tinycrypt-watch-{env}, or with --phone tinycrypt-phone-{env}
+#       (CRYPT-30: one per bundle ID, the iPhone app's and the watch app's)
+#   infra/scripts/sns-platform.sh [--phone] <device-token> --thing key-N
+#       subscribe a device to key-N's topic by hand. Normally a device registers itself by enrolling
+#       with the key (CRYPT-30); this is for migration and repairs.
 #
 # Needs AWS_PROFILE (default nakom.is-sandbox) and NPM_ENVIRONMENT (default sandbox). A
 # development-signed watch build only gets pushes from the APNs sandbox, hence APNS_SANDBOX.
 set -euo pipefail
 
-token=${1:?usage: sns-platform.sh <watch-device-token> | --app-only}
+usage='usage: sns-platform.sh [--phone] --app-only | [--phone] <device-token> --thing key-N'
+kind=watch
+if [ "${1:-}" = --phone ]; then
+    kind=phone
+    shift
+fi
+token=${1:?$usage}
+key=
+if [ "$token" != --app-only ]; then
+    [ "${2:-}" = --thing ] && [[ "${3:-}" =~ ^key-[0-9]+$ ]] || { echo "$usage" >&2; exit 2; }
+    key=$3
+fi
 env=${NPM_ENVIRONMENT:-sandbox}
 export AWS_PROFILE=${AWS_PROFILE:-nakom.is-sandbox}
 export AWS_REGION=${AWS_REGION:-eu-west-2}
 platform=$([ "$env" = prod ] && echo APNS || echo APNS_SANDBOX)
-name="tinycrypt-watch-${env}"
+name="tinycrypt-${kind}-${env}"
 params="/tinycrypt/${env}/apns"
 
 output() {
     aws cloudformation describe-stacks --stack-name TinycryptPushStack \
         --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
 }
-topic_arn=$(output PresenceTopicArn)
 feedback_role=$(output SnsDeliveryFeedbackRoleArn)
 
 param() { aws ssm get-parameter --name "$1" ${2:+--with-decryption} --query Parameter.Value --output text; }
 team_id=$(param "${params}/team-id")
 key_id=$(param "${params}/key-id")
-bundle_id=com.nakomis.tinycrypt.watch.watchkitapp
+bundle_id=$([ "$kind" = phone ] && echo com.nakomis.tinycrypt.watch || echo com.nakomis.tinycrypt.watch.watchkitapp)
 
 # The key goes in as a JSON-encoded attribute file so it never appears on a command line.
 attrs=$(mktemp)
@@ -60,6 +73,10 @@ else
 fi
 
 [ "$token" = --app-only ] && exit 0
+
+topic_arn=$(aws cloudformation describe-stacks --stack-name TinycryptKeyStack \
+    --query "Stacks[0].Outputs[?OutputKey=='PresenceTopicArn${key//-/}'].OutputValue" --output text)
+[ -n "$topic_arn" ] && [ "$topic_arn" != None ] || { echo "no presence topic for $key in $env (infra/keys.json?)" >&2; exit 1; }
 
 # Creating an endpoint for an existing token returns the existing endpoint.
 endpoint_arn=$(aws sns create-platform-endpoint --platform-application-arn "$app_arn" --token "$token" \
