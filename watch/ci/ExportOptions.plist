@@ -16,7 +16,7 @@
 	<key>provisioningProfiles</key>
 	<dict>
 		<key>com.nakomis.tinycrypt.watch</key>
-		<string>tinycrypt CI iOS stub App Store</string>
+		<string>tinycrypt CI iOS App Store</string>
 		<key>com.nakomis.tinycrypt.watch.watchkitapp</key>
 		<string>tinycrypt CI watch App Store</string>
 	</dict>

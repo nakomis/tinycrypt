@@ -147,7 +147,7 @@ jobs:
           "$d/venv/bin/python" watch/ci/asc.py cert "$d/dist.key" "$d/dist.cer"
           profiles="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
-          for name in "tinycrypt CI iOS stub App Store" "tinycrypt CI watch App Store"; do
+          for name in "tinycrypt CI iOS App Store" "tinycrypt CI watch App Store"; do
             "$d/venv/bin/python" watch/ci/asc.py profile "$name" "$d/p.mobileprovision"
             uuid=$(security cms -D -i "$d/p.mobileprovision" | plutil -extract UUID raw -)
             cp "$d/p.mobileprovision" "$profiles/$uuid.mobileprovision"
