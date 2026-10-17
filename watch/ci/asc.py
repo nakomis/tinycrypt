@@ -97,7 +97,8 @@ def push(identifier):
 
 
 def make_profile(name, identifier, key_path):
-    if get("/v1/profiles", **{"filter[name]": name, "filter[profileState]": "ACTIVE"})["data"]:
+    found = get("/v1/profiles", **{"filter[name]": name, "filter[profileState]": "ACTIVE"})["data"]
+    if any(p["attributes"]["name"] == name for p in found):  # the filter matches more than the exact name
         print(f"profile {name!r} already exists")
         return
     c, _ = find_cert(key_path)
@@ -111,7 +112,8 @@ def make_profile(name, identifier, key_path):
 
 
 def profile(name, out):
-    found = get("/v1/profiles", **{"filter[name]": name, "filter[profileState]": "ACTIVE"})["data"]
+    found = [p for p in get("/v1/profiles", **{"filter[name]": name, "filter[profileState]": "ACTIVE"})["data"]
+             if p["attributes"]["name"] == name]
     if len(found) != 1:
         sys.exit(f"want exactly one active profile named {name!r}, found {len(found)}")
     a = found[0]["attributes"]

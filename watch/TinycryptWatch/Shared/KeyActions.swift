@@ -4,32 +4,55 @@ import Foundation
 
 @MainActor
 enum KeyActions {
-    /// Enrols this device into its slot on a key in enrol mode (the closest one), then registers it for
-    /// that key's pushes if we have a token yet. Returns the key's info and its peripheral identifier.
-    static func enrol(as kind: PresenceProtocol.Kind, token: String?) async throws -> (KeyInfo, UUID) {
+    /// Enrols this device into its slot on the closest key in enrol mode. Returns the key's info, its
+    /// peripheral identifier and the fingerprint of the Secure Enclave key it now trusts. Registering
+    /// for pushes is a separate step, so a failure there doesn't lose the enrolment.
+    static func enrol(as kind: PresenceProtocol.Kind) async throws -> (KeyInfo, UUID, String) {
         let link = KeyLink()
         defer { link.close() }
-        try await link.open(peripheralID: nil)
-        let pub = KeyStore.publicKeyXY(try KeyStore.key())
-        try await link.write(PresenceProtocol.enrol, Data([kind.rawValue]) + pub)
+        try await link.openForEnrolment()
+        let key = try KeyStore.key()
+        try await link.write(PresenceProtocol.enrol, Data([kind.rawValue]) + KeyStore.publicKeyXY(key))
         let info = try await link.readJSON(PresenceProtocol.info, as: KeyInfo.self)
-        if let token {
-            try await link.writeJSON(PresenceProtocol.register, ["kind": kind.name, "token": token])
-        }
-        return (info, link.peripheral!.identifier)
+        return (info, link.peripheral!.identifier, KeyStore.fingerprint(key))
     }
 
-    /// Reads the key's challenge, checks it is for the request that was pushed, signs and answers.
-    static func approve(key: UUID, expectedRequest: Data?) async throws {
+    enum ApproveError: LocalizedError {
+        case expired, noKey, wrongRequest
+        var errorDescription: String? {
+            switch self {
+            case .expired: return "This request has expired. Try signing in again."
+            case .noKey: return "This phone needs adding to the key again."
+            case .wrongRequest: return "The key is asking about a different sign-in, so nothing was approved."
+            }
+        }
+    }
+
+    /// Reads the key's challenge, checks it is for the request that was pushed, signs and answers, all
+    /// within `deadline`: the key gives up after about 30 s, and iOS gives a background action little time.
+    static func approve(key: UUID, expectedRequest: Data?, deadline: Duration = .seconds(25)) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await approveNow(key: key, expectedRequest: expectedRequest) }
+            group.addTask {
+                try await Task.sleep(for: deadline)
+                throw KeyLinkError.timedOut("approval")
+            }
+            defer { group.cancelAll() }
+            try await group.next()
+        }
+    }
+
+    private static func approveNow(key: UUID, expectedRequest: Data?) async throws {
+        // Never make a key here: one the key hasn't enrolled can't approve anything.
+        guard let signer = KeyStore.existingKey() else { throw ApproveError.noKey }
         let link = KeyLink()
         defer { link.close() }
         try await link.open(peripheralID: key)
         let challenge = try await link.read(PresenceProtocol.challenge)
         guard PresenceProtocol.isSignable(challenge, expectedRequest: expectedRequest) else {
-            throw KeyLinkError.refused("that challenge isn't for this request: not signed")
+            throw ApproveError.wrongRequest
         }
-        let sig = try KeyStore.key().signature(for: challenge).rawRepresentation
-        try await link.write(PresenceProtocol.response, sig)
+        try await link.write(PresenceProtocol.response, try signer.signature(for: challenge).rawRepresentation)
     }
 
     static func info(key: UUID) async throws -> KeyInfo {

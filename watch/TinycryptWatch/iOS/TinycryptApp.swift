@@ -20,10 +20,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         center.setNotificationCategories([Presence.category])
-        Task {
-            _ = try? await center.requestAuthorization(options: [.alert, .sound])
-            await MainActor.run { application.registerForRemoteNotifications() }
-        }
+        // A token whatever the permission: the key registers it, and the app shows a banner if
+        // notifications are off (permission itself is asked for while adding a key).
+        application.registerForRemoteNotifications()
         return true
     }
 
@@ -39,26 +38,38 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     @MainActor
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let notification = response.notification
-        // A plain tap opens the app on the request, with its own Approve button.
-        if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
-            KeysModel.shared.pending = PendingApproval(notification, keys: KeysModel.shared)
-            return
+        let model = KeysModel.shared
+        switch response.actionIdentifier {
+        case UNNotificationDefaultActionIdentifier:
+            // A plain tap opens the app on the request, with its own Approve button.
+            switch PendingApproval.make(notification, keys: model) {
+            case .success(let pending): model.pending = pending
+            case .failure(let why): model.notice = why.localizedDescription
+            }
+        case Presence.approve:
+            switch PendingApproval.make(notification, keys: model) {
+            case .failure(let why):
+                await Self.tellUser(why.localizedDescription)
+            case .success(let pending):
+                if pending.stale { return await Self.tellUser(KeyActions.ApproveError.expired.localizedDescription) }
+                do {
+                    try await KeyActions.approve(key: pending.key.peripheralID, expectedRequest: pending.expectedRequest)
+                } catch {
+                    await Self.tellUser("\(error.localizedDescription) You can still press the button on the key.")
+                }
+            }
+        default:
+            break  // Deny, or dismissed: the key times out and the sign-in fails
         }
-        guard response.actionIdentifier == Presence.approve else { return }
-        // SNS can't give APNs an expiry, so a push can turn up late: never act on a stale one.
-        if let age = Presence.pushLatency(notification)?["sentToNowMs"].flatMap(Int.init), age > Presence.maxAgeMs {
-            return
-        }
-        // A push from a key must name its request, and the challenge must match it. Only the app's
-        // own local test notification has none.
-        var expected: Data?
-        if notification.request.trigger is UNPushNotificationTrigger {
-            guard let hash = Presence.requestHash(notification) else { return }
-            expected = hash
-        }
-        let keys = KeysModel.shared.keys
-        guard let key = Presence.keyThing(notification).flatMap(KeysModel.shared.key(thing:)) ?? (keys.count == 1 ? keys.first : nil)
-        else { return }
-        try? await KeyActions.approve(key: key.peripheralID, expectedRequest: expected)
+    }
+
+    /// An approval from the notification runs with the app in the background, so a failure is said
+    /// with a notification of its own (no category: nothing to act on).
+    static func tellUser(_ text: String) async {
+        let content = UNMutableNotificationContent()
+        content.title = "Not approved"
+        content.body = text
+        try? await UNUserNotificationCenter.current()
+            .add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 }

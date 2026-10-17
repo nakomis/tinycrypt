@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 struct KeysView: View {
     @EnvironmentObject private var model: KeysModel
@@ -7,6 +8,17 @@ struct KeysView: View {
     var body: some View {
         NavigationStack {
             List {
+                if !model.notificationsAllowed {
+                    Section {
+                        Label("Notifications are off, so this phone can't ask you to approve sign-ins.",
+                              systemImage: "bell.slash")
+                        Button("Turn them on in Settings") {
+                            if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    }
+                }
                 if model.keys.isEmpty {
                     Section {
                         Text("No keys yet. Plug your tinycrypt in, then tap Add a key.")
@@ -15,7 +27,12 @@ struct KeysView: View {
                 }
                 ForEach(model.keys) { key in
                     NavigationLink(value: key) {
-                        Label(key.name, systemImage: "key.horizontal")
+                        if model.needsSetup(key) {
+                            Label { Text(key.name) + Text("  needs adding again").foregroundStyle(.orange) }
+                                icon: { Image(systemName: "key.horizontal") }
+                        } else {
+                            Label(key.name, systemImage: "key.horizontal")
+                        }
                     }
                 }
                 Section {
@@ -33,7 +50,17 @@ struct KeysView: View {
             .fullScreenCover(item: $model.pending) { pending in
                 ApproveView(pending: pending) { model.pending = nil }
             }
-            .task { await model.reregister() }
+            .task {
+                await model.refreshNotificationPermission()
+                await model.reregister()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                Task { await model.refreshNotificationPermission() }
+            }
+            .alert(model.notice ?? "", isPresented: Binding(get: { model.notice != nil },
+                                                             set: { if !$0 { model.notice = nil } })) {
+                Button("OK") { model.notice = nil }
+            }
         }
     }
 }
@@ -76,7 +103,7 @@ struct AddKeyView: View {
         VStack(alignment: .leading, spacing: 20) {
             Step(n: 1, text: "Plug your key in.")
             Step(n: 2, text: "Hold its button for 5 seconds, until the light pulses magenta.")
-            Step(n: 3, text: "Keep the key close to this phone, then tap Continue.")
+            Step(n: 3, text: "Keep the key close to this phone, then tap Continue. Allow notifications when asked: that's how the key asks you to approve.")
             Spacer()
             HStack(spacing: 10) {
                 Text("Is the key pulsing magenta?").font(.headline)
@@ -91,11 +118,16 @@ struct AddKeyView: View {
 
     private func enrol() async {
         stage = .enrolling
+        // Asked here, where it's clear why: without it the phone can't prompt for approvals.
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        await model.refreshNotificationPermission()
         do {
-            let (info, id) = try await KeyActions.enrol(as: .phone, token: model.token)
-            let key = KnownKey(thing: info.thing, peripheralID: id, registeredToken: model.token)
+            let (info, id, fingerprint) = try await KeyActions.enrol(as: .phone)
+            // Saved as soon as the key has enrolled us; registering for its pushes is retried until it works.
+            let key = KnownKey(thing: info.thing, peripheralID: id, registeredToken: nil, fingerprint: fingerprint)
             model.save(key)
             added = key
+            await model.reregister()
             stage = .wifi
         } catch {
             stage = .failed(error.localizedDescription)

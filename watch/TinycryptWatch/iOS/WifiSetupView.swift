@@ -58,7 +58,8 @@ struct WifiSetupView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
-                        .disabled(joining || (chosen.secured && password.count < 8))
+                        // WPA2 needs 8 or more; an open network (or one typed in by name) may have none.
+                        .disabled(joining || (chosen.secured ? password.count < 8 : (1...7).contains(password.count)))
                         Button("Choose another network") { self.chosen = nil; status = nil }
                             .buttonStyle(.borderless)
                             .disabled(joining)
@@ -90,7 +91,7 @@ struct WifiSetupView: View {
                 }
                 Section("Not listed?") {
                     TextField("Network name", text: $otherName).autocorrectionDisabled().textInputAutocapitalization(.never)
-                    Button("Use this network") { chosen = WifiNetwork(ssid: otherName, rssi: -100, secured: true) }
+                    Button("Use this network") { chosen = WifiNetwork(ssid: otherName, rssi: -100, secured: false) }
                         .disabled(otherName.isEmpty)
                 }
                 if let status { Section { Text(status) } }
