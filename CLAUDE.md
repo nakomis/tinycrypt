@@ -308,10 +308,13 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   `deploy-prod` (profile `nakom.is-prod`; asks before IAM changes, and only with Martin's OK). The account
   comes from the profile, never a literal. **Keys are listed per environment in `infra/keys.json`**
   (CRYPT-26): a deploy declares every key, so add one there before `provision-key.sh`; a key missing from
-  the list has its Thing deleted. **Prod** (CRYPT-26) is set up but unused: no key goes there until the
-  ATECC, the PCB, secure boot and flash encryption are done. Prod pushes need a distribution-signed
-  (TestFlight) watch build, since a development build only gets APNs sandbox pushes (CRYPT-27); until then
-  prod's platform app has no endpoint (`sns-platform.sh --app-only`). The house Wi-Fi is only in sandbox SSM.
+  the list has its Thing deleted. **Prod** (CRYPT-26, CRYPT-29): one key so far, `tinycrypt-prod-key-1`,
+  a **throwaway** (16 Oct): the ATECC camera dev board (`BOARD=cam`), prod-signed, no metrics (no vmauth user
+  yet), no secure boot or flash encryption. It's updated **by wire only**: CI's images use the PCB's pins, so
+  one from Fleet would lose its chip and roll back. The PCB keys replace it (bring-up checklist:
+  `hardware/key-board/README.md`). Prod pushes need a distribution-signed (TestFlight) watch build, since a
+  development build only gets APNs sandbox pushes (CRYPT-27); the watch's production token is registered
+  (`sns-platform.sh`, prod). The house Wi-Fi is only in sandbox SSM.
 
 ## Architecture diagrams
 
