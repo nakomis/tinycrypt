@@ -134,13 +134,14 @@ export class KeyStack extends cdk.Stack {
             }),
         });
         const snsArn = (resource: string) => `arn:${this.partition}:sns:${this.region}:${this.account}:${resource}`;
+        // SNS authorises endpoint actions against the platform application's ARN, so both forms.
         register.addToRolePolicy(new iam.PolicyStatement({
-            actions: ['sns:CreatePlatformEndpoint', 'sns:ListEndpointsByPlatformApplication'],
-            resources: [snsArn(`app/*/tinycrypt-watch-${deployEnv}`), snsArn(`app/*/tinycrypt-phone-${deployEnv}`)],
-        }));
-        register.addToRolePolicy(new iam.PolicyStatement({
-            actions: ['sns:GetEndpointAttributes', 'sns:SetEndpointAttributes', 'sns:DeleteEndpoint'],
-            resources: [snsArn(`endpoint/*/tinycrypt-watch-${deployEnv}/*`), snsArn(`endpoint/*/tinycrypt-phone-${deployEnv}/*`)],
+            actions: ['sns:CreatePlatformEndpoint', 'sns:GetEndpointAttributes', 'sns:SetEndpointAttributes',
+                'sns:DeleteEndpoint'],
+            resources: ['watch', 'phone'].flatMap(kind => [
+                snsArn(`app/*/tinycrypt-${kind}-${deployEnv}`),
+                snsArn(`endpoint/*/tinycrypt-${kind}-${deployEnv}/*`),
+            ]),
         }));
         register.addToRolePolicy(new iam.PolicyStatement({
             actions: ['sns:Subscribe', 'sns:ListSubscriptionsByTopic'],
