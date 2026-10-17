@@ -5,5 +5,5 @@
 CODE_SIGN_STYLE = Manual
 DEVELOPMENT_TEAM = 62YFUFBSFX
 CODE_SIGN_IDENTITY = Apple Distribution
-PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*] = tinycrypt CI iOS stub App Store
+PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*] = tinycrypt CI iOS App Store
 PROVISIONING_PROFILE_SPECIFIER[sdk=watchos*] = tinycrypt CI watch App Store

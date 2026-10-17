@@ -49,6 +49,7 @@ set(TINYCRYPT_PORT_SOURCES
   ${TINYCRYPT_ROOT}/port/crypto_tc.c
   ${TINYCRYPT_ROOT}/port/x509_min.c
   ${TINYCRYPT_ROOT}/port/metrics_line.c
+  ${TINYCRYPT_ROOT}/port/setup_msg.c
 )
 # The INSECURE software secure element: the sim, and an ESP32 with no ATECC608B.
 set(TINYCRYPT_SE_SOFT_SOURCES ${TINYCRYPT_ROOT}/port/se_soft.c)

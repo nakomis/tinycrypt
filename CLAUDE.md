@@ -58,11 +58,11 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
 - **Watch over BLE on the key** (`esp32s3/main/ble_presence.c`, NimBLE, `CONFIG_TINYCRYPT_WATCH_BLE`): the
   key advertises the protocol GATT service; a challenge is
   readable during a wait (and up to 3 s after, for U2F re-asks) and approves once. **Bonded** (CRYPT-19):
-  LE Secure Connections, Just Works, bonds in NVS (two at most); the challenge, response and telemetry
-  characteristics need an encrypted link, and only the enrolled watch's identity address (`watch_peer`)
-  may use it: any other bond is deleted and the link dropped, and repeat pairing is only allowed in the
-  enrol window. Connections are still dropped after 10 s and two are allowed (a squatter can't lock the
-  watch out). **Enrol:** hold BOOT 5 s while idle (not at power-up: that's download mode) for a 60 s
+  LE Secure Connections, Just Works, bonds in NVS (four at most since CRYPT-30); the challenge, response and
+  telemetry characteristics need an encrypted link, and only an enrolled device's identity address
+  (`watch_peer`, `phone_peer`) may use it: any other bond is deleted and the link dropped, and repeat
+  pairing is only allowed in the enrol window. Connections are dropped after 10 s (an enrolled device's
+  own after 60 s, for setup) and two are allowed (a squatter can't lock the watch out). **Enrol:** hold BOOT 5 s while idle (not at power-up: that's download mode) for a 60 s
   window; the watch taps "Enrol with key" and accepts the pairing request (enrolment needs the bonded
   link). A watch enrolled before bonding must enrol again. Its public key is in NVS
   (`watch_pub`), so reflashing keeps it. Wi-Fi runs modem sleep alongside BLE (ESP-IDF requires it).
@@ -153,9 +153,10 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
     Approve on the unlocked watch approves. That's the intended presence check, not a second factor.
 
 - **Push path** (CRYPT-12): each key publishes to its own `tinycrypt/{env}/presence/{thing}/request`
-  (CRYPT-15: its IoT policy allows no other topic, so one key can't pose as another); an IoT rule's SNS
-  action sends it to the `tinycrypt-presence-{env}` topic, and SNS delivers it to the watch's APNs
-  platform endpoint. **No Lambda** (Martin's call): sign-ins are rare, so a Lambda would nearly always be
+  (CRYPT-15: its IoT policy allows no other topic, so one key can't pose as another); **its own** IoT
+  rule's SNS action sends it to **its own** topic, named after the Thing (`tinycrypt-{env}-key-N`,
+  CRYPT-30, in `TinycryptKeyStack`; an IoT SNS target can't be templated, so a rule per key), and SNS
+  delivers it to that key's enrolled watch and phone. No push at all while neither is enrolled. **No Lambda** (Martin's call): sign-ins are rare, so a Lambda would nearly always be
   cold (+~0.9 s measured). The key publishes SNS's JSON message structure itself:
   `{"default": "...", "APNS_SANDBOX": "<APNs payload as a JSON string>"}` (`APNS` in prod), with
   category `PRESENCE`. Measured on a real watch: publish → on the watch 1.3–2.4 s; SNS holds a
@@ -276,10 +277,29 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   `AWS.SNS.MOBILE.APNS.TTL`, and APNs may store a push for an offline watch and deliver it late. The
   real guard is the key: its BLE challenge is single-use and expires with the CTAP request, so a late
   Approve finds nothing to sign. The watch should also refuse requests older than ~60 s.
-- **SNS setup** CloudFormation can't do: `infra/scripts/sns-platform.sh <device-token>` creates or updates
-  the platform application `tinycrypt-watch-{env}` (key from SSM, delivery logging on), the watch's
-  endpoint and its subscription. Safe to re-run. The device token comes from the watch app's run log
-  (`push token …`). A development-signed watch build only gets pushes from the APNs sandbox.
+- **SNS setup** CloudFormation can't do: `infra/scripts/sns-platform.sh [--phone] --app-only` creates or
+  updates the platform application, `tinycrypt-watch-{env}` or `tinycrypt-phone-{env}` (one per bundle ID:
+  the watch app's and the iPhone app's; key from SSM, delivery logging on). Safe to re-run. A
+  development-signed build only gets pushes from the APNs sandbox.
+- **Registration** (CRYPT-30): a device subscribes itself by enrolling: the app writes its APNs token to
+  the key's `register` characteristic, the key keeps it in NVS until IoT Core acknowledges it on
+  `tinycrypt/{env}/register/{thing}` (its policy allows only its own), and a rule invokes
+  `tinycrypt-register-{env}` (Python, `infra/lambda/register/`; enrolment only, never the sign-in path),
+  which subscribes the endpoint to that key's topic and replaces the key's previous device of that kind
+  (deleting an endpoint nothing else uses). By hand, for repairs: `sns-platform.sh [--phone] <token>
+  --thing key-N`.
+- **Setup from the iPhone app** (CRYPT-30, `port/setup_msg.c`, tested by `tests/test_setup_msg.py`): two
+  approvers per key, a watch and a phone (enrol write: 64 bytes = watch, as before; or kind 1|2 ‖ X‖Y);
+  bonds up to 4. Enrolled devices get `info` (read), `wifi` (join or scan; read the scan) and `register`
+  characteristics, and 60 s connections (others 10 s). Wi-Fi from the app is kept in NVS (`wifi`
+  namespace) and wins over `prov`'s, which is optional (`provision-key.sh --no-wifi`); it applies at once.
+  A device can only register its own kind's token. An approver is removed by enrolling a replacement of
+  its kind (or moving that device to the other kind): the key forgets it, deletes its bond and stray
+  ones, and deregisters it (an empty token, so the Lambda unsubscribes that kind). A CTAP reset doesn't
+  clear approvers. The register rule selects named fields only and passes `clientid()`, which the Lambda
+  requires to be the Thing. A scan pauses the Wi-Fi retries (ESP-IDF won't scan while joining).
+  Bonded devices that knew the key before this firmware may have cached its old GATT table: enrol
+  them again to see `info`/`wifi`/`register`.
 - **APNs key**: the live team-scoped key is **`25Z7VVWUQW`** (sandbox and production). tinycrypt keeps
   its own copy in SSM at `/tinycrypt/{env}/apns/{team-id,key-id,private-key}`, put there by hand.
   `VH26CFZ5GD`, still named in the cert portal's `/home-certs/*/apns/key-id`, is revoked (APNs says

@@ -57,9 +57,10 @@ bool prov_load(prov_t *prov)
         ESP_LOGE(TAG, "not provisioned (%s): run infra/scripts/provision-key.sh", esp_err_to_name(err));
         return false;
     }
-    bool ok = get_fixed(h, "wifi_ssid", prov->wifi_ssid, sizeof(prov->wifi_ssid));
-    ok &= get_fixed(h, "wifi_pass", prov->wifi_password, sizeof(prov->wifi_password));
-    ok &= get_fixed(h, "endpoint", prov->iot_endpoint, sizeof(prov->iot_endpoint));
+    // Optional since CRYPT-30: the key's owner can set it from the iPhone app instead.
+    get_optional(h, "wifi_ssid", prov->wifi_ssid, sizeof(prov->wifi_ssid));
+    get_optional(h, "wifi_pass", prov->wifi_password, sizeof(prov->wifi_password));
+    bool ok = get_fixed(h, "endpoint", prov->iot_endpoint, sizeof(prov->iot_endpoint));
     ok &= get_fixed(h, "thing", prov->thing_name, sizeof(prov->thing_name));
     ok &= get_fixed(h, "topic", prov->presence_topic, sizeof(prov->presence_topic));
     ok &= get_fixed(h, "apns", prov->apns_platform, sizeof(prov->apns_platform));

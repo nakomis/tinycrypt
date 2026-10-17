@@ -3,6 +3,7 @@
 #
 #   infra/scripts/provision-key.sh [key-name] --csr FILE     the key's own key (CRYPT-22)
 #   infra/scripts/provision-key.sh [key-name] [--new]        legacy: a key made here (INSECURE)
+#   ... --no-wifi     no Wi-Fi in prov (CRYPT-30): the key's owner sets it from the iPhone app
 #
 # --csr: the IoT private key lives in the key's secure element (ATECC608B slot 0, or the soft
 # stand-in), and only its CSR comes here (esp32s3/tools/atecc_provision.py PORT csr THING FILE). Its
@@ -40,10 +41,12 @@ umask 077
 
 key=key-1
 new=false
+wifi=true
 csr=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --new) new=true ;;
+        --no-wifi) wifi=false ;;
         --csr) csr=${2:?--csr needs a file}; shift ;;
         -*) echo "unknown option: $1" >&2; exit 2 ;;
         *) key=$1 ;;
@@ -127,9 +130,9 @@ status=$(aws iot describe-certificate --certificate-id "${cert_arn##*/}" --query
 
 endpoint=$(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text)
 # Through the environment, not argv, so the password never shows up in `ps`.
-export TC_SSID TC_PASSWORD
-TC_SSID=$(aws ssm get-parameter --profile "$wifi_profile" --name /Nakomis/Wifi/SSID --query Parameter.Value --output text)
-TC_PASSWORD=$(aws ssm get-parameter --profile "$wifi_profile" --name /Nakomis/Wifi/Password --with-decryption \
+export TC_SSID= TC_PASSWORD=
+$wifi && TC_SSID=$(aws ssm get-parameter --profile "$wifi_profile" --name /Nakomis/Wifi/SSID --query Parameter.Value --output text)
+$wifi && TC_PASSWORD=$(aws ssm get-parameter --profile "$wifi_profile" --name /Nakomis/Wifi/Password --with-decryption \
     --query Parameter.Value --output text)
 
 export TC_METRICS_URL=${METRICS_URL:-http://172.29.0.33:8427} TC_METRICS_USER=$thing TC_METRICS_PASS=
@@ -153,10 +156,11 @@ ssid, password = os.environ["TC_SSID"], os.environ["TC_PASSWORD"]
 if len(ssid.encode()) > 32 or len(password.encode()) > 63:
     sys.exit("Wi-Fi SSID or password too long for ESP-IDF (32 / 63 bytes)")
 # Keys and sizes as embedded/esp32s3/main/prov.c reads them.
-rows = [
-    ("tinycrypt", "namespace", "", ""),
-    ("wifi_ssid", "data", "string", ssid),
-    ("wifi_pass", "data", "string", password),
+rows = [("tinycrypt", "namespace", "", "")]
+# Without Wi-Fi (--no-wifi), the owner sets it over BLE from the iPhone app (CRYPT-30).
+if ssid:
+    rows += [("wifi_ssid", "data", "string", ssid), ("wifi_pass", "data", "string", password)]
+rows += [
     ("endpoint", "data", "string", endpoint),
     ("thing", "data", "string", thing),
     ("topic", "data", "string", f"tinycrypt/{env}/presence/{thing}/request"),

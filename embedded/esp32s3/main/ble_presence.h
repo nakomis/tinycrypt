@@ -6,6 +6,14 @@
 //   response   write  r||s (64): the watch Secure Enclave's signature over SHA-256(challenge)
 //   enrol      write  X||Y (64): the watch's public key; only while the enrol window is open
 //   telemetry  write  timing JSON from the watch, logged
+//   CRYPT-30, setup from the iPhone app (JSON, setup_msg.h), enrolled devices only:
+//   info       read   8CB61CE4-75BA-4862-8079-5B71FD663294   the key's name, version, Wi-Fi, enrolments
+//   wifi       r/w    BCF39609-8B45-427E-9BFC-8EB1456BAB20   join a network, or scan; read the scan
+//   register   write  3F07D86E-1CAC-4EA1-9FD5-AD819760957A   the device's APNs token, for this key's pushes
+//
+// Two approvers (CRYPT-30): a watch and a phone, either of which can approve (with the button). The
+// enrol write is X||Y (64: a watch, as before) or kind (1 watch, 2 phone) || X||Y (65); re-enrolling a
+// kind replaces only that kind. A response is checked against its own connection's device's key.
 //
 // A challenge lives for one user action (presence_is_new_action(): solo1's U2F path re-asks every
 // 750 ms, and the challenge survives that, readable for up to PRESENCE_SAME_ACTION_GAP_MS after a
@@ -30,10 +38,11 @@ bool ble_presence_start(void);
 // The watch as a presence source for presence_wait().
 extern const presence_source ble_presence_source;
 
-// Opens the enrol window: for `seconds`, the next watch to write its public key is enrolled,
-// replacing any previous one.
+// Opens the enrol window: for `seconds`, the next watch or phone to write its public key is enrolled,
+// replacing any previous one of its kind.
 void ble_presence_open_enrol(uint32_t seconds);
 
+// A watch or a phone is enrolled (CRYPT-30: no one is pushed to otherwise).
 bool ble_presence_enrolled(void);
 
 // Connections from a central since boot (CRYPT-28's metrics: a link only lasts seconds, so a count

@@ -35,7 +35,9 @@ CONFIG_BT_NIMBLE_MAX_CONNECTIONS=2
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
 CONFIG_BT_NIMBLE_SM_SC=y
 CONFIG_BT_NIMBLE_SM_LEGACY=n
-CONFIG_BT_NIMBLE_MAX_BONDS=2
+# Two approvers since CRYPT-30 (a watch and a phone), plus room while one re-enrols: at 2 the store
+# would make room by evicting the other approver's bond.
+CONFIG_BT_NIMBLE_MAX_BONDS=4
 
 # OTA (CRYPT-14): two app slots, and a new image that fails its self-test (or crashes before passing
 # it) is rolled back by the bootloader. Images must be signed (RSA-3072, the secure boot v2 scheme);

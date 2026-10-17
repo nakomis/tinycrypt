@@ -147,7 +147,7 @@ jobs:
           "$d/venv/bin/python" watch/ci/asc.py cert "$d/dist.key" "$d/dist.cer"
           profiles="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
-          for name in "tinycrypt CI iOS stub App Store" "tinycrypt CI watch App Store"; do
+          for name in "tinycrypt CI iOS App Store" "tinycrypt CI watch App Store"; do
             "$d/venv/bin/python" watch/ci/asc.py profile "$name" "$d/p.mobileprovision"
             uuid=$(security cms -D -i "$d/p.mobileprovision" | plutil -extract UUID raw -)
             cp "$d/p.mobileprovision" "$profiles/$uuid.mobileprovision"
@@ -454,6 +454,11 @@ jobs:
         run: pnpm run build
       - name: Synth (sandbox and prod)
         run: pnpm run ci-synth-sandbox && pnpm run ci-synth-prod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Register Lambda tests
+        run: python -m pip install pytest==8.4.2 && python -m pytest -v lambda
 
   ci-status:
     name: CI Status

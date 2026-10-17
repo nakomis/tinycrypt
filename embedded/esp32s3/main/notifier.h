@@ -33,3 +33,20 @@ const prov_t *notifier_prov(void);
 
 // Whether the MQTT connection to IoT Core is up (CRYPT-28's metrics).
 bool notifier_mqtt_connected(void);
+
+// CRYPT-30: setup from the iPhone app, over BLE (ble_presence.c). Safe from any task.
+#include "setup_msg.h"
+// Keeps the network in NVS (it then wins over prov's) and joins it now. False if Wi-Fi isn't running
+// or NVS refused.
+bool notifier_set_wifi(const char *ssid, const char *password);
+// Starts a scan; notifier_scan_result has it a few seconds later.
+bool notifier_scan_wifi(void);
+int notifier_scan_result(char out[SETUP_READ_MAX + 1]);
+// The network in use and how joining it is going.
+setup_wifi_state_t notifier_wifi_info(char ssid[SETUP_SSID_MAX + 1]);
+// Keeps an enrolled device's APNs token until IoT Core has it, relaying it to
+// tinycrypt/{env}/register/{thing} for the register Lambda (now, or on the next connection).
+bool notifier_register(const setup_register_t *reg);
+// The key forgot its device of this kind (replaced by a new one, or moved to the other kind): stop
+// pushing to it, unless that kind registers again first.
+void notifier_deregister(setup_kind_t kind);

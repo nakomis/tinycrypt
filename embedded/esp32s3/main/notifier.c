@@ -9,6 +9,10 @@
 // Fleet (CRYPT-14): the key also subscribes to tinycrypt/<thing>/commands and answers on
 // tinycrypt/<thing>/responses; ota.c handles the commands. Its settings and certificate come from
 // the prov partition (prov.h), not the image.
+//
+// CRYPT-30: Wi-Fi set from the iPhone app over BLE (notifier_set_wifi) is kept in NVS and wins over
+// prov's; a key can be provisioned with none. Devices enrolled over BLE are registered for that key's
+// pushes by relaying their APNs tokens to tinycrypt/{env}/register/{thing} (notifier_register).
 #include "notifier.h"
 #include "led_status.h"
 #include "ota.h"
@@ -18,6 +22,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 
@@ -32,7 +37,11 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "mqtt_client.h"
+#include "nvs.h"
 #include "sdkconfig.h"
+#ifdef CONFIG_TINYCRYPT_WATCH_BLE
+#include "ble_presence.h"
+#endif
 
 static const char *TAG = "notifier";
 
@@ -50,6 +59,7 @@ extern const char root_ca_start[] asm("_binary_AmazonRootCA1_pem_start");
 static prov_t prov;
 static char commands_topic[sizeof(prov.thing_name) + 32];
 static char responses_topic[sizeof(prov.thing_name) + 32];
+static char register_topic[sizeof(prov.presence_topic)];
 static int subscribe_msg_id = -1;
 static esp_mqtt_client_handle_t mqtt;
 static volatile bool mqtt_connected;
@@ -74,11 +84,30 @@ static uint32_t wifi_retry_ms = WIFI_RETRY_MIN_MS;
 static bool started;
 static bool prov_loaded;  // prov is valid (metrics can run even if MQTT setup failed)
 
+// CRYPT-30: the network in use (NVS's, else prov's) and how joining it is going, for the app.
+#define WIFI_NVS "wifi"
+#define REGISTER_NVS "register"
+static portMUX_TYPE wifi_lock = portMUX_INITIALIZER_UNLOCKED;
+static bool wifi_started;
+static char wifi_ssid[SETUP_SSID_MAX + 1];
+static volatile setup_wifi_state_t wifi_state = SETUP_WIFI_UNSET;
+static volatile bool reconfiguring;  // our own disconnect, to switch networks: don't back off
+static setup_network_t scan_nets[SETUP_SCAN_MAX];
+static size_t scan_count;
+static volatile bool scanning;
+// Registrations being published, so a PUBACK clears the right one (and not a newer token).
+static int register_msg_id[2] = {-1, -1};
+static char register_sent[2][SETUP_TOKEN_MAX + 1];
+
 
 static void send_request(void);
+static void publish_registrations(void);
+static void registration_acked(setup_kind_t kind);
 
 static void wifi_retry_fire(void *arg)
 {
+    if (wifi_state == SETUP_WIFI_UNSET)
+        return;  // no network yet: the app sets one (CRYPT-30)
     esp_err_t err = esp_wifi_connect();
     if (err != ESP_OK)
         ESP_LOGW(TAG, "esp_wifi_connect: %s", esp_err_to_name(err));
@@ -94,24 +123,84 @@ static void connect_deadline_fire(void *arg)
     led_status_set(LED_OFFLINE, true);
 }
 
+// Keeps the strongest SETUP_SCAN_MAX networks (once each) for the app's wifi read.
+static void scan_done(void)
+{
+    uint16_t n = 20;
+    wifi_ap_record_t *recs = calloc(n, sizeof(*recs));
+    setup_network_t *nets = calloc(n, sizeof(*nets));
+    if (recs == NULL || nets == NULL || esp_wifi_scan_get_ap_records(&n, recs) != ESP_OK)
+        n = 0;
+    for (uint16_t i = 0; i < n; i++)
+    {
+        strlcpy(nets[i].ssid, (const char *)recs[i].ssid, sizeof(nets[i].ssid));
+        nets[i].rssi = recs[i].rssi;
+        nets[i].secured = recs[i].authmode != WIFI_AUTH_OPEN;
+    }
+    if (recs == NULL || nets == NULL)
+        esp_wifi_clear_ap_list();
+    size_t kept = nets ? setup_scan_tidy(nets, n) : 0;
+    taskENTER_CRITICAL(&wifi_lock);
+    if (nets)
+        memcpy(scan_nets, nets, kept * sizeof(*nets));
+    scan_count = kept;
+    taskEXIT_CRITICAL(&wifi_lock);
+    scanning = false;
+    free(recs);
+    free(nets);
+    ESP_LOGI(TAG, "Wi-Fi scan: %u networks", (unsigned)kept);
+    if (wifi_state != SETUP_WIFI_CONNECTED && wifi_state != SETUP_WIFI_UNSET)
+        esp_timer_start_once(wifi_retry, (uint64_t)WIFI_RETRY_MIN_MS * 1000);
+}
+
 static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START)
         wifi_retry_fire(NULL);
     else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED)
     {
+        uint8_t reason = ((wifi_event_sta_disconnected_t *)data)->reason;
         // MQTT only notices a dead socket at its next keepalive; stop queueing into it now.
         mqtt_connected = false;
+        bool ours = reconfiguring && reason == WIFI_REASON_ASSOC_LEAVE;
+        reconfiguring = false;
+        if (ours)
+            return;  // notifier_set_wifi (or a scan) left the old network itself: no back-off
+        switch (reason)
+        {
+        case WIFI_REASON_AUTH_FAIL:
+        case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+        case WIFI_REASON_HANDSHAKE_TIMEOUT:
+        case WIFI_REASON_MIC_FAILURE:
+            wifi_state = SETUP_WIFI_WRONG_PASSWORD;
+            break;
+        case WIFI_REASON_NO_AP_FOUND:
+        case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+        case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
+        case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
+            wifi_state = SETUP_WIFI_NOT_FOUND;
+            break;
+        default:
+            // It keeps retrying. A wrong password or a missing network stays reported until it joins
+            // or is given another, so the app sees it even if a later attempt fails differently.
+            if (wifi_state == SETUP_WIFI_CONNECTED)
+                wifi_state = SETUP_WIFI_CONNECTING;
+            break;
+        }
         if (ever_connected || connect_overdue)
             led_status_set(LED_OFFLINE, true);
-        ESP_LOGW(TAG, "Wi-Fi disconnected (reason %d), retrying in %" PRIu32 " ms",
-                 ((wifi_event_sta_disconnected_t *)data)->reason, wifi_retry_ms);
-        esp_timer_start_once(wifi_retry, (uint64_t)wifi_retry_ms * 1000);
+        ESP_LOGW(TAG, "Wi-Fi disconnected (reason %d), retrying in %" PRIu32 " ms", reason, wifi_retry_ms);
+        if (!scanning)  // a scan restarts the retries when it's done
+            esp_timer_start_once(wifi_retry, (uint64_t)wifi_retry_ms * 1000);
         wifi_retry_ms = wifi_retry_ms * 2 > WIFI_RETRY_MAX_MS ? WIFI_RETRY_MAX_MS : wifi_retry_ms * 2;
     }
+    else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE)
+        scan_done();
     else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
     {
         wifi_retry_ms = WIFI_RETRY_MIN_MS;
+        wifi_state = SETUP_WIFI_CONNECTED;
+        reconfiguring = false;
         ESP_LOGI(TAG, "Wi-Fi up, IP " IPSTR, IP2STR(&((ip_event_got_ip_t *)data)->ip_info.ip));
     }
 }
@@ -132,6 +221,7 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         if (!ever_connected)
             led_status_flash(LED_FLASH_ONLINE);
         ever_connected = true;
+        publish_registrations();
         taskENTER_CRITICAL(&pending_lock);
         bool send_now = pending;
         pending = false;
@@ -174,6 +264,9 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         break;
     case MQTT_EVENT_PUBLISHED:
         ESP_LOGI(TAG, "msg %d acknowledged by IoT Core", event->msg_id);
+        for (int kind = 0; kind < 2; kind++)
+            if (event->msg_id == register_msg_id[kind])
+                registration_acked((setup_kind_t)kind);
         break;
     case MQTT_EVENT_ERROR:
         if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT)
@@ -187,6 +280,34 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     default:
         break;
     }
+}
+
+static esp_err_t configure_wifi(const char *ssid, const char *password)
+{
+    wifi_config_t sta = {0};
+    strlcpy((char *)sta.sta.ssid, ssid, sizeof(sta.sta.ssid));
+    strlcpy((char *)sta.sta.password, password, sizeof(sta.sta.password));
+    // An open network only when the app set one with no password; otherwise WPA2 or better.
+    sta.sta.threshold.authmode = password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &sta);
+    memset(&sta, 0, sizeof(sta));
+    return err;
+}
+
+// The network the app set (CRYPT-30), if any.
+static bool load_wifi(char ssid[SETUP_SSID_MAX + 1], char password[SETUP_PASSWORD_MAX + 1])
+{
+    nvs_handle_t h;
+    if (nvs_open(WIFI_NVS, NVS_READONLY, &h) != ESP_OK)
+        return false;
+    size_t len = SETUP_SSID_MAX + 1;
+    bool ok = nvs_get_str(h, "ssid", ssid, &len) == ESP_OK && ssid[0];
+    len = SETUP_PASSWORD_MAX + 1;
+    ok = ok && nvs_get_str(h, "pass", password, &len) == ESP_OK;
+    nvs_close(h);
+    if (!ok)
+        ssid[0] = password[0] = 0;
+    return ok;
 }
 
 // Logs and gives up rather than aborting: the button must keep working without the notifier.
@@ -212,6 +333,11 @@ bool notifier_start(void)
     prov_loaded = true;
     snprintf(commands_topic, sizeof(commands_topic), "tinycrypt/%s/commands", prov.thing_name);
     snprintf(responses_topic, sizeof(responses_topic), "tinycrypt/%s/responses", prov.thing_name);
+    // tinycrypt/{env}/presence/{thing}/request -> tinycrypt/{env}/register/{thing}
+    const char *presence = strstr(prov.presence_topic, "/presence/");
+    if (presence != NULL)
+        snprintf(register_topic, sizeof(register_topic), "%.*s/register/%s", (int)(presence - prov.presence_topic),
+                 prov.presence_topic, prov.thing_name);
 
     // The radio becomes the RNG's entropy source; the ADC one must be off before Wi-Fi starts.
     bootloader_random_disable();
@@ -233,13 +359,20 @@ bool notifier_start(void)
     TRY(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, NULL));
     TRY(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event, NULL));
 
-    wifi_config_t sta = {0};
-    strlcpy((char *)sta.sta.ssid, prov.wifi_ssid, sizeof(sta.sta.ssid));
-    strlcpy((char *)sta.sta.password, prov.wifi_password, sizeof(sta.sta.password));
-    sta.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    // The app's network (CRYPT-30), else prov's, else none yet: the radio still starts, for scanning.
+    char password[SETUP_PASSWORD_MAX + 1] = "";
+    if (!load_wifi(wifi_ssid, password))
+    {
+        strlcpy(wifi_ssid, prov.wifi_ssid, sizeof(wifi_ssid));
+        strlcpy(password, prov.wifi_password, sizeof(password));
+    }
+    wifi_state = wifi_ssid[0] ? SETUP_WIFI_CONNECTING : SETUP_WIFI_UNSET;
     TRY(esp_wifi_set_mode(WIFI_MODE_STA));
-    TRY(esp_wifi_set_config(WIFI_IF_STA, &sta));
+    esp_err_t config_err = configure_wifi(wifi_ssid, password);
+    memset(password, 0, sizeof(password));
+    TRY(config_err);
     TRY(esp_wifi_start());
+    wifi_started = true;
     radio_on = true;  // from here on the radio is the entropy source
 #ifdef CONFIG_BT_ENABLED
     // Wi-Fi and BLE share the radio, and ESP-IDF requires modem sleep for that. A push then waits
@@ -286,8 +419,8 @@ bool notifier_start(void)
     TRY(esp_mqtt_client_register_event(mqtt, ESP_EVENT_ANY_ID, mqtt_event, NULL));
     TRY(esp_mqtt_client_start(mqtt));
     started = true;
-    ESP_LOGI(TAG, "notifier starting: Wi-Fi \"%s\", IoT Core %s, topic %s", prov.wifi_ssid, prov.iot_endpoint,
-             prov.presence_topic);
+    ESP_LOGI(TAG, "notifier starting: Wi-Fi \"%s\", IoT Core %s, topic %s", wifi_ssid[0] ? wifi_ssid : "(none yet)",
+             prov.iot_endpoint, prov.presence_topic);
     return radio_on;
 }
 
@@ -387,6 +520,13 @@ void notifier_presence_wait_started(void)
     // Only a request the watch can approve gets a push (presence.h); anything else is button only.
     if (!presence_request_bound())
         return;
+    // CRYPT-30: and only if a watch or phone is enrolled to approve it: otherwise no one is told.
+#ifdef CONFIG_TINYCRYPT_WATCH_BLE
+    if (!ble_presence_enrolled())
+        return;
+#else
+    return;
+#endif
     // One push per user action (presence.h): U2F's 750 ms re-asks don't each buzz the watch.
     if (presence_is_new_action())
     {
@@ -432,4 +572,164 @@ const prov_t *notifier_prov(void)
 bool notifier_mqtt_connected(void)
 {
     return mqtt_connected;
+}
+
+// ---- CRYPT-30: set up from the iPhone app over BLE ------------------------------------------
+
+bool notifier_set_wifi(const char *ssid, const char *password)
+{
+    if (!wifi_started)
+        return false;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(WIFI_NVS, NVS_READWRITE, &h);
+    if (err == ESP_OK)
+    {
+        err = nvs_set_str(h, "ssid", ssid);
+        if (err == ESP_OK)
+            err = nvs_set_str(h, "pass", password);
+        if (err == ESP_OK)
+            err = nvs_commit(h);
+        nvs_close(h);
+    }
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "can't keep the new Wi-Fi network: %s", esp_err_to_name(err));
+        return false;
+    }
+    // Leave the old network (its disconnect event is ours, so no back-off) and join the new one now.
+    esp_timer_stop(wifi_retry);
+    reconfiguring = true;
+    esp_wifi_disconnect();
+    taskENTER_CRITICAL(&wifi_lock);
+    strlcpy(wifi_ssid, ssid, sizeof(wifi_ssid));
+    taskEXIT_CRITICAL(&wifi_lock);
+    wifi_state = SETUP_WIFI_CONNECTING;
+    wifi_retry_ms = WIFI_RETRY_MIN_MS;
+    if (configure_wifi(ssid, password) != ESP_OK || esp_wifi_connect() != ESP_OK)
+        esp_timer_start_once(wifi_retry, (uint64_t)WIFI_RETRY_MIN_MS * 1000);
+    ESP_LOGI(TAG, "Wi-Fi set from the app: joining \"%s\"", ssid);
+    return true;
+}
+
+bool notifier_scan_wifi(void)
+{
+    if (!wifi_started || scanning)
+        return wifi_started;
+    // ESP-IDF won't scan while the station is trying to join, which is just when the app asks (the
+    // network is wrong or missing): pause the retries and stop the attempt; scan_done resumes them.
+    scanning = true;
+    esp_timer_stop(wifi_retry);
+    if (wifi_state != SETUP_WIFI_CONNECTED && wifi_state != SETUP_WIFI_UNSET)
+    {
+        reconfiguring = true;
+        esp_wifi_disconnect();
+    }
+    const wifi_scan_config_t config = {.show_hidden = false};
+    esp_err_t err = esp_wifi_scan_start(&config, false);  // SCAN_DONE arrives in wifi_event
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Wi-Fi scan: %s", esp_err_to_name(err));
+        scanning = false;
+        if (wifi_state != SETUP_WIFI_CONNECTED && wifi_state != SETUP_WIFI_UNSET)
+            esp_timer_start_once(wifi_retry, (uint64_t)WIFI_RETRY_MIN_MS * 1000);
+        return false;
+    }
+    return true;
+}
+
+int notifier_scan_result(char out[SETUP_READ_MAX + 1])
+{
+    setup_network_t nets[SETUP_SCAN_MAX];
+    taskENTER_CRITICAL(&wifi_lock);
+    size_t n = scan_count;
+    memcpy(nets, scan_nets, n * sizeof(*nets));
+    taskEXIT_CRITICAL(&wifi_lock);
+    return setup_scan_json(nets, n, out);
+}
+
+setup_wifi_state_t notifier_wifi_info(char ssid[SETUP_SSID_MAX + 1])
+{
+    taskENTER_CRITICAL(&wifi_lock);
+    strlcpy(ssid, wifi_ssid, SETUP_SSID_MAX + 1);
+    taskEXIT_CRITICAL(&wifi_lock);
+    return wifi_state;
+}
+
+// Publishes one kind's pending registration, if there is one and MQTT is up.
+static void publish_registration(setup_kind_t kind)
+{
+    if (!started || !mqtt_connected || register_topic[0] == 0)
+        return;
+    setup_register_t reg = {.kind = kind};
+    nvs_handle_t h;
+    if (nvs_open(REGISTER_NVS, NVS_READONLY, &h) != ESP_OK)
+        return;
+    size_t len = sizeof(reg.token);
+    bool have = nvs_get_str(h, setup_kind_name(kind), reg.token, &len) == ESP_OK;
+    nvs_close(h);
+    char *payload = have ? setup_register_payload(&reg) : NULL;
+    if (payload == NULL)
+        return;
+    strlcpy(register_sent[kind], reg.token, sizeof(register_sent[kind]));
+    register_msg_id[kind] = esp_mqtt_client_enqueue(mqtt, register_topic, payload, 0, 1, 0, true);
+    ESP_LOGI(TAG, "%s registration queued (msg %d)", setup_kind_name(kind), register_msg_id[kind]);
+    cJSON_free(payload);
+}
+
+static void publish_registrations(void)
+{
+    publish_registration(SETUP_KIND_WATCH);
+    publish_registration(SETUP_KIND_PHONE);
+}
+
+// IoT Core has it: forget it, unless a newer token has arrived meanwhile.
+static void registration_acked(setup_kind_t kind)
+{
+    register_msg_id[kind] = -1;
+    nvs_handle_t h;
+    if (nvs_open(REGISTER_NVS, NVS_READWRITE, &h) != ESP_OK)
+        return;
+    char token[SETUP_TOKEN_MAX + 1];
+    size_t len = sizeof(token);
+    if (nvs_get_str(h, setup_kind_name(kind), token, &len) == ESP_OK && strcmp(token, register_sent[kind]) == 0)
+    {
+        nvs_erase_key(h, setup_kind_name(kind));
+        nvs_commit(h);
+        ESP_LOGI(TAG, "%s registered for this key's pushes", setup_kind_name(kind));
+    }
+    nvs_close(h);
+}
+
+bool notifier_register(const setup_register_t *reg)
+{
+    if (register_topic[0] == 0)
+    {
+        ESP_LOGE(TAG, "no register topic (prov's topic isn't tinycrypt/{env}/presence/...): can't register");
+        return false;
+    }
+    // Kept until IoT Core acknowledges it: a new key usually has no Wi-Fi when it's enrolled. An
+    // empty token deregisters the kind (notifier_deregister).
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(REGISTER_NVS, NVS_READWRITE, &h);
+    if (err == ESP_OK)
+    {
+        err = nvs_set_str(h, setup_kind_name(reg->kind), reg->token);
+        if (err == ESP_OK)
+            err = nvs_commit(h);
+        nvs_close(h);
+    }
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "can't keep the %s registration: %s", setup_kind_name(reg->kind), esp_err_to_name(err));
+        return false;
+    }
+    publish_registration(reg->kind);
+    return true;
+}
+
+void notifier_deregister(setup_kind_t kind)
+{
+    setup_register_t reg = {.kind = kind};  // token "": the register Lambda unsubscribes this kind
+    if (prov_loaded)
+        notifier_register(&reg);
 }

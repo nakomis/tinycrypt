@@ -1,10 +1,12 @@
 // Watch presence over BLE (CRYPT-13). See ble_presence.h.
 #include "ble_presence.h"
 #include "led_status.h"
+#include "setup_msg.h"
 
 #include <inttypes.h>
 #include <string.h>
 
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -19,6 +21,10 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "store/config/ble_store_config.h"
+#include "sdkconfig.h"
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+#include "notifier.h"
+#endif
 
 // Not in the public header; Espressif's own examples declare it like this.
 void ble_store_config_init(void);
@@ -33,14 +39,15 @@ static const char *TAG = "ble-presence";
 #define CHALLENGE_LEN (DOMAIN_LEN + NONCE_LEN + PRESENCE_REQUEST_HASH_LEN)
 // An unapproved challenge outlives its wait by this long, so a U2F re-ask can still use it.
 #define SAME_ACTION_GAP_US ((int64_t)PRESENCE_SAME_ACTION_GAP_MS * 1000)
-// Any connection is dropped after this long: an approval takes under 2 s.
+// Any connection is dropped after this long: an approval takes under 2 s. An enrolled device's own
+// encrypted link gets longer (CRYPT-30), for setting up Wi-Fi from the app.
 #define CONNECTION_LIMIT_US (10 * 1000 * 1000)
+#define APPROVER_CONNECTION_LIMIT_US (60 * 1000 * 1000)
 #define TELEMETRY_LOG_MAX 160
 #define NVS_NAMESPACE "tinycrypt"
-#define NVS_WATCH_KEY "watch_pub"
-#define NVS_PEER_KEY "watch_peer"  // the bonded watch's BLE identity address
 
 static ble_uuid_any_t svc_uuid, challenge_uuid, response_uuid, enrol_uuid, telemetry_uuid;
+static ble_uuid_any_t info_uuid, wifi_uuid, register_uuid;
 
 // Shared between the NimBLE host task and the CTAP task.
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
@@ -52,10 +59,22 @@ static int64_t last_wait_end_us;
 static int64_t enrol_until_us;
 static esp_timer_handle_t enrol_timer;
 
-static uint8_t watch_pub[TINYCRYPT_P256_PUB_LEN];
-static bool have_watch;
-static ble_addr_t watch_peer;
-static bool have_peer;
+// CRYPT-30: up to two approvers, a watch and a phone, each with its Secure Enclave key and the BLE
+// identity address it bonded from. The watch's NVS names predate the phone, so they stay.
+typedef struct
+{
+    const char *pub_key;   // NVS names
+    const char *peer_key;
+    uint8_t pub[TINYCRYPT_P256_PUB_LEN];
+    bool have_pub;
+    ble_addr_t peer;
+    bool have_peer;
+} approver_t;
+static approver_t approvers[2] = {
+    [SETUP_KIND_WATCH] = {.pub_key = "watch_pub", .peer_key = "watch_peer"},
+    [SETUP_KIND_PHONE] = {.pub_key = "phone_pub", .peer_key = "phone_peer"},
+};
+#define NO_APPROVER (-1)
 
 static uint8_t own_addr_type;
 static bool running;  // NimBLE and the controller are up (ble_presence_suspend)
@@ -92,7 +111,7 @@ static void arm(void *ctx)
     waiting = true;
     taskEXIT_CRITICAL(&lock);
     if (new_action)
-        ESP_LOGI(TAG, "challenge armed%s", have_watch ? "" : " (no watch enrolled)");
+        ESP_LOGI(TAG, "challenge armed%s", ble_presence_enrolled() ? "" : " (no watch or phone enrolled)");
 }
 
 static bool is_approved(void *ctx)
@@ -165,6 +184,20 @@ static void allow_conn(uint16_t conn, bool allow)
     }
 }
 
+// Which approver a connection's bonded peer is, or NO_APPROVER.
+static int approver_of(uint16_t conn)
+{
+    struct ble_gap_conn_desc desc;
+    if (ble_gap_conn_find(conn, &desc) != 0 || !desc.sec_state.encrypted)
+        return NO_APPROVER;
+    for (int i = 0; i < 2; i++)
+        if (approvers[i].have_peer && ble_addr_cmp(&approvers[i].peer, &desc.peer_id_addr) == 0)
+            return i;
+    return NO_APPROVER;
+}
+
+static void extend_connection(uint16_t conn);
+
 static bool enrol_open(void)
 {
     taskENTER_CRITICAL(&lock);
@@ -203,17 +236,62 @@ void ble_presence_open_enrol(uint32_t seconds)
 
 bool ble_presence_enrolled(void)
 {
-    return have_watch;
+    return approvers[SETUP_KIND_WATCH].have_pub || approvers[SETUP_KIND_PHONE].have_pub;
 }
 
-static int enrol(uint16_t conn, const uint8_t *pub, size_t len)
+static bool forget(approver_t *a)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK)
+        return false;
+    nvs_erase_key(nvs, a->pub_key);
+    nvs_erase_key(nvs, a->peer_key);
+    bool ok = nvs_commit(nvs) == ESP_OK;
+    nvs_close(nvs);
+    a->have_pub = a->have_peer = false;
+    return ok;
+}
+
+// Bonds from devices that paired in an enrol window but never enrolled (a cancelled setup) would pile
+// up, and a full store evicts the oldest bond, which may be an approver's: keep only the approvers'.
+static void delete_stray_bonds(void)
+{
+    ble_addr_t peers[CONFIG_BT_NIMBLE_MAX_BONDS];
+    int n = 0;
+    if (ble_store_util_bonded_peers(peers, &n, CONFIG_BT_NIMBLE_MAX_BONDS) != 0)
+        return;
+    for (int i = 0; i < n; i++)
+    {
+        bool keep = false;
+        for (int k = 0; k < 2; k++)
+            keep |= approvers[k].have_peer && ble_addr_cmp(&approvers[k].peer, &peers[i]) == 0;
+        if (!keep)
+            ble_store_util_delete_peer(&peers[i]);
+    }
+}
+
+// The write is X||Y (64 bytes: a watch, as before CRYPT-30) or kind (1 watch, 2 phone) || X||Y.
+static int enrol(uint16_t conn, const uint8_t *buf, size_t len)
 {
     if (!enrol_open())
     {
         ESP_LOGW(TAG, "enrol refused: hold the button 5 s to open the enrol window");
         return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
     }
-    if (len != TINYCRYPT_P256_PUB_LEN)
+    setup_kind_t kind;
+    const uint8_t *pub;
+    if (len == TINYCRYPT_P256_PUB_LEN)
+    {
+        kind = SETUP_KIND_WATCH;
+        pub = buf;
+    }
+    else if (len == TINYCRYPT_P256_PUB_LEN + 1 && (buf[0] == 1 || buf[0] == 2))
+    {
+        kind = buf[0] == 1 ? SETUP_KIND_WATCH : SETUP_KIND_PHONE;
+        pub = buf + 1;
+        len--;
+    }
+    else
         return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
     if (!uECC_valid_public_key(pub, uECC_secp256r1()))
     {
@@ -221,49 +299,147 @@ static int enrol(uint16_t conn, const uint8_t *pub, size_t len)
         return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
     }
     // The link is encrypted (the characteristic demands it), so this connection has just bonded:
-    // its identity address becomes the one allowed peer, and any previous watch's bond goes.
+    // its identity address becomes this kind's allowed peer, and the previous one's bond goes
+    // (unless the other approver is that same device).
     struct ble_gap_conn_desc desc;
     if (ble_gap_conn_find(conn, &desc) != 0 || !desc.sec_state.encrypted || !desc.sec_state.bonded)
     {
         ESP_LOGW(TAG, "enrol refused: the link isn't bonded");
         return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
     }
-    if (have_peer && ble_addr_cmp(&watch_peer, &desc.peer_id_addr) != 0)
-        ble_store_util_delete_peer(&watch_peer);
+    approver_t *a = &approvers[kind], *other = &approvers[1 - kind];
+    // The new slot is written first, so a failure here loses nothing.
     nvs_handle_t nvs;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK)
         return BLE_ATT_ERR_UNLIKELY;
-    esp_err_t err = nvs_set_blob(nvs, NVS_WATCH_KEY, pub, len);
+    esp_err_t err = nvs_set_blob(nvs, a->pub_key, pub, len);
     if (err == ESP_OK)
-        err = nvs_set_blob(nvs, NVS_PEER_KEY, &desc.peer_id_addr, sizeof(desc.peer_id_addr));
+        err = nvs_set_blob(nvs, a->peer_key, &desc.peer_id_addr, sizeof(desc.peer_id_addr));
     if (err == ESP_OK)
         err = nvs_commit(nvs);
     nvs_close(nvs);
     if (err != ESP_OK)
         return BLE_ATT_ERR_UNLIKELY;
-    memcpy(watch_pub, pub, len);
-    have_watch = true;
-    watch_peer = desc.peer_id_addr;
-    have_peer = true;
+    bool replaced = a->have_pub && !(a->have_peer && ble_addr_cmp(&a->peer, &desc.peer_id_addr) == 0);
+    ble_addr_t old_peer = a->peer;
+    bool had_peer = a->have_peer;
+    memcpy(a->pub, pub, len);
+    a->have_pub = true;
+    a->peer = desc.peer_id_addr;
+    a->have_peer = true;
+    // One device is one approver: enrolling as the other kind moves it.
+    bool moved = other->have_peer && ble_addr_cmp(&other->peer, &desc.peer_id_addr) == 0;
+    if (moved)
+        forget(other);
+    // The replaced device goes: its bond (unless it's the other approver too), and its pushes.
+    if (had_peer && ble_addr_cmp(&old_peer, &desc.peer_id_addr) != 0 &&
+        !(other->have_peer && ble_addr_cmp(&other->peer, &old_peer) == 0))
+        ble_store_util_delete_peer(&old_peer);
+    delete_stray_bonds();
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+    if (replaced)
+        notifier_deregister(kind);
+    if (moved)
+        notifier_deregister((setup_kind_t)(1 - kind));
+#else
+    (void)replaced;
+#endif
     allow_conn(conn, true);
+    extend_connection(conn);  // the app goes on to register and set Wi-Fi
     taskENTER_CRITICAL(&lock);
-    enrol_until_us = 0;  // one watch per window
+    enrol_until_us = 0;  // one device per window
     taskEXIT_CRITICAL(&lock);
     if (enrol_timer != NULL)
         esp_timer_stop(enrol_timer);
     led_status_set(LED_ENROL_OPEN, false);
     led_status_flash(LED_FLASH_ENROLLED);
-    ESP_LOGW(TAG, "ENROLLED watch key %02x%02x%02x%02x...", pub[0], pub[1], pub[2], pub[3]);
+    ESP_LOGW(TAG, "ENROLLED %s key %02x%02x%02x%02x...", setup_kind_name(kind), pub[0], pub[1], pub[2], pub[3]);
     return 0;
+}
+
+// ---- setup from the app (CRYPT-30) -----------------------------------------------
+
+static int read_info(struct ble_gatt_access_ctxt *ctxt)
+{
+    char out[SETUP_READ_MAX + 1];
+    char ssid[SETUP_SSID_MAX + 1] = "";
+    setup_info_t info = {
+        .version = esp_app_get_description()->version,
+        .ssid = ssid,
+        .watch = approvers[SETUP_KIND_WATCH].have_pub,
+        .phone = approvers[SETUP_KIND_PHONE].have_pub,
+    };
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+    info.thing = notifier_thing_name();
+    info.wifi = notifier_wifi_info(ssid);
+    info.iot = notifier_mqtt_connected();
+#endif
+    int n = setup_info_json(&info, out);
+    if (n < 0)
+        return BLE_ATT_ERR_INSUFFICIENT_RES;
+    return os_mbuf_append(ctxt->om, out, (uint16_t)n) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+}
+
+static int read_scan(struct ble_gatt_access_ctxt *ctxt)
+{
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+    char out[SETUP_READ_MAX + 1];
+    int n = notifier_scan_result(out);
+    if (n < 0)
+        return BLE_ATT_ERR_INSUFFICIENT_RES;
+    return os_mbuf_append(ctxt->om, out, (uint16_t)n) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+#else
+    return os_mbuf_append(ctxt->om, "[]", 2) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+#endif
+}
+
+static int write_wifi(const uint8_t *buf, size_t len)
+{
+    setup_wifi_t w;
+    const char *err = "";
+    if (!setup_parse_wifi((const char *)buf, len, &w, &err))
+    {
+        ESP_LOGW(TAG, "wifi write refused: %s", err);
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    }
+    bool ok = false;
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+    ok = w.scan ? notifier_scan_wifi() : notifier_set_wifi(w.ssid, w.password);
+#endif
+    memset(&w, 0, sizeof(w));
+    return ok ? 0 : BLE_ATT_ERR_UNLIKELY;
+}
+
+static int write_register(int approver, const uint8_t *buf, size_t len)
+{
+    setup_register_t reg;
+    const char *err = "";
+    if (!setup_parse_register((const char *)buf, len, &reg, &err))
+    {
+        ESP_LOGW(TAG, "register write refused: %s", err);
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    }
+    // A device registers its own pushes only: a watch can't sign a phone up, or the other way round.
+    if ((int)reg.kind != approver)
+    {
+        ESP_LOGW(TAG, "register refused: a %s can't register a %s", setup_kind_name((setup_kind_t)approver),
+                 setup_kind_name(reg.kind));
+        return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
+    }
+#ifdef CONFIG_TINYCRYPT_NOTIFIER
+    return notifier_register(&reg) ? 0 : BLE_ATT_ERR_UNLIKELY;
+#else
+    return BLE_ATT_ERR_UNLIKELY;
+#endif
 }
 
 // ---- GATT --------------------------------------------------------------------
 
-static int respond(const uint8_t *sig, size_t len)
+static int respond(int approver, const uint8_t *sig, size_t len)
 {
-    if (!have_watch)
+    if (approver == NO_APPROVER || !approvers[approver].have_pub)
     {
-        ESP_LOGW(TAG, "response refused: no watch enrolled");
+        ESP_LOGW(TAG, "response refused: not from an enrolled watch or phone");
         return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
     }
     if (len != TINYCRYPT_P256_SIG_LEN)
@@ -279,9 +455,9 @@ static int respond(const uint8_t *sig, size_t len)
         return BLE_ATT_ERR_UNLIKELY;
     }
     int64_t t0 = esp_timer_get_time();
-    if (!tinycrypt_presence_sig_verify(watch_pub, msg, sizeof(msg), sig))
+    if (!tinycrypt_presence_sig_verify(approvers[approver].pub, msg, sizeof(msg), sig))
     {
-        ESP_LOGW(TAG, "INVALID watch signature");
+        ESP_LOGW(TAG, "INVALID %s signature", setup_kind_name((setup_kind_t)approver));
         return BLE_ATT_ERR_UNLIKELY;
     }
     taskENTER_CRITICAL(&lock);
@@ -290,8 +466,8 @@ static int respond(const uint8_t *sig, size_t len)
     if (ok)
         approved = true;
     taskEXIT_CRITICAL(&lock);
-    ESP_LOGI(TAG, "%s watch signature (verified in %" PRId64 " ms)", ok ? "VALID" : "late",
-             (esp_timer_get_time() - t0) / 1000);
+    ESP_LOGI(TAG, "%s %s signature (verified in %" PRId64 " ms)", ok ? "VALID" : "late",
+             setup_kind_name((setup_kind_t)approver), (esp_timer_get_time() - t0) / 1000);
     return ok ? 0 : BLE_ATT_ERR_UNLIKELY;
 }
 
@@ -302,16 +478,20 @@ static int gatt_access(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt
     expire_challenge();
     const ble_uuid_t *uuid = ctxt->chr->uuid;
 
-    // Enrolment has its own gate (the enrol window); everything else is for the enrolled watch only.
+    // Enrolment has its own gate (the enrol window); everything else is for enrolled devices only.
     bool enrolling = ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR && ble_uuid_cmp(uuid, &enrol_uuid.u) == 0;
     if (!enrolling && !conn_allowed(conn))
     {
-        ESP_LOGW(TAG, "refused: connection %u isn't the enrolled watch", conn);
+        ESP_LOGW(TAG, "refused: connection %u isn't an enrolled watch or phone", conn);
         return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;
     }
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR)
     {
+        if (ble_uuid_cmp(uuid, &info_uuid.u) == 0)
+            return read_info(ctxt);
+        if (ble_uuid_cmp(uuid, &wifi_uuid.u) == 0)
+            return read_scan(ctxt);
         if (ble_uuid_cmp(uuid, &challenge_uuid.u) != 0)
             return BLE_ATT_ERR_UNLIKELY;
         uint8_t msg[CHALLENGE_LEN];
@@ -331,14 +511,24 @@ static int gatt_access(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt
 
     if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR)
         return BLE_ATT_ERR_UNLIKELY;
-    uint8_t buf[256];
+    uint8_t buf[SETUP_READ_MAX];
     uint16_t len = 0;
     if (ble_hs_mbuf_to_flat(ctxt->om, buf, sizeof(buf), &len) != 0)
         return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
     if (ble_uuid_cmp(uuid, &response_uuid.u) == 0)
-        return respond(buf, len);
+        return respond(approver_of(conn), buf, len);
     if (enrolling)
         return enrol(conn, buf, len);
+    int rc = BLE_ATT_ERR_UNLIKELY;
+    if (ble_uuid_cmp(uuid, &wifi_uuid.u) == 0)
+        rc = write_wifi(buf, len);
+    else if (ble_uuid_cmp(uuid, &register_uuid.u) == 0)
+        rc = write_register(approver_of(conn), buf, len);
+    if (ble_uuid_cmp(uuid, &wifi_uuid.u) == 0 || ble_uuid_cmp(uuid, &register_uuid.u) == 0)
+    {
+        memset(buf, 0, sizeof(buf));  // a Wi-Fi password may have passed through
+        return rc;
+    }
     if (ble_uuid_cmp(uuid, &telemetry_uuid.u) == 0)
     {
         // Unauthenticated: log it truncated and printable only, clearly marked as the peer's words.
@@ -359,6 +549,12 @@ static struct ble_gatt_chr_def characteristics[] = {
     {.uuid = &response_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC},
     {.uuid = &enrol_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC},
     {.uuid = &telemetry_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC},
+    // CRYPT-30: setup from the app (setup_msg.h), enrolled devices only.
+    {.uuid = &info_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC},
+    {.uuid = &wifi_uuid.u,
+     .access_cb = gatt_access,
+     .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC},
+    {.uuid = &register_uuid.u, .access_cb = gatt_access, .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC},
     {0},
 };
 
@@ -380,7 +576,7 @@ static void drop_connection(void *arg)
 {
     uint16_t handle = slot_conn[(uintptr_t)arg];
     if (handle != NO_CONN && ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM) == 0)
-        ESP_LOGI(TAG, "connection %u dropped after %d s", handle, (int)(CONNECTION_LIMIT_US / 1000000));
+        ESP_LOGI(TAG, "connection %u dropped at its time limit", handle);
 }
 
 static void connection_opened(uint16_t handle)
@@ -400,6 +596,16 @@ static void connection_opened(uint16_t handle)
         esp_timer_start_once(slot_timer[i], CONNECTION_LIMIT_US);
         return;
     }
+}
+
+static void extend_connection(uint16_t conn)
+{
+    for (int i = 0; i < SLOTS; i++)
+        if (slot_conn[i] == conn && slot_timer[i] != NULL)
+        {
+            esp_timer_stop(slot_timer[i]);
+            esp_timer_start_once(slot_timer[i], APPROVER_CONNECTION_LIMIT_US);
+        }
 }
 
 static void connection_closed(uint16_t handle)
@@ -434,11 +640,12 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             ESP_LOGW(TAG, "encryption failed on connection %u (status %d)", conn, event->enc_change.status);
             break;
         }
-        bool is_watch = have_peer && ble_addr_cmp(&desc.peer_id_addr, &watch_peer) == 0;
-        if (is_watch)
+        int approver = approver_of(conn);
+        if (approver != NO_APPROVER)
         {
             allow_conn(conn, true);
-            ESP_LOGI(TAG, "enrolled watch connected, link encrypted");
+            extend_connection(conn);
+            ESP_LOGI(TAG, "enrolled %s connected, link encrypted", setup_kind_name((setup_kind_t)approver));
         }
         else if (enrol_open())
             ESP_LOGI(TAG, "a central bonded during the enrol window; waiting for its key");
@@ -511,8 +718,9 @@ static void on_sync(void)
     }
     uint8_t addr[6] = {0};
     ble_hs_id_copy_addr(own_addr_type, addr, NULL);
-    ESP_LOGI(TAG, "advertising as tinycrypt (%02x:%02x:%02x:%02x:%02x:%02x)%s", addr[5], addr[4], addr[3],
-             addr[2], addr[1], addr[0], have_watch ? ", watch enrolled" : ", no watch enrolled");
+    ESP_LOGI(TAG, "advertising as tinycrypt (%02x:%02x:%02x:%02x:%02x:%02x)%s%s", addr[5], addr[4], addr[3],
+             addr[2], addr[1], addr[0], approvers[SETUP_KIND_WATCH].have_pub ? ", watch enrolled" : "",
+             approvers[SETUP_KIND_PHONE].have_pub ? ", phone enrolled" : "");
     advertise();
 }
 
@@ -604,10 +812,14 @@ bool ble_presence_start(void)
     nvs_handle_t nvs;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK)
     {
-        size_t len = sizeof(watch_pub);
-        have_watch = nvs_get_blob(nvs, NVS_WATCH_KEY, watch_pub, &len) == ESP_OK && len == sizeof(watch_pub);
-        len = sizeof(watch_peer);
-        have_peer = nvs_get_blob(nvs, NVS_PEER_KEY, &watch_peer, &len) == ESP_OK && len == sizeof(watch_peer);
+        for (int i = 0; i < 2; i++)
+        {
+            approver_t *a = &approvers[i];
+            size_t len = sizeof(a->pub);
+            a->have_pub = nvs_get_blob(nvs, a->pub_key, a->pub, &len) == ESP_OK && len == sizeof(a->pub);
+            len = sizeof(a->peer);
+            a->have_peer = nvs_get_blob(nvs, a->peer_key, &a->peer, &len) == ESP_OK && len == sizeof(a->peer);
+        }
         nvs_close(nvs);
     }
 
@@ -616,10 +828,13 @@ bool ble_presence_start(void)
     ble_uuid_from_str(&response_uuid, "78dc86b2-6f57-478e-979c-22ed6e135a98");
     ble_uuid_from_str(&enrol_uuid, "a40698d1-315e-496d-8855-05283e3369a0");
     ble_uuid_from_str(&telemetry_uuid, "c88c0afb-1519-4b4f-9ca1-e5f9eeffd259");
+    ble_uuid_from_str(&info_uuid, "8cb61ce4-75ba-4862-8079-5b71fd663294");
+    ble_uuid_from_str(&wifi_uuid, "bcf39609-8b45-427e-9bfc-8eb1456bab20");
+    ble_uuid_from_str(&register_uuid, "3f07d86e-1cac-4ea1-9fd5-ad819760957a");
 
     if (!bring_up())
         return false;
-    if (have_watch && !have_peer)
+    if (approvers[SETUP_KIND_WATCH].have_pub && !approvers[SETUP_KIND_WATCH].have_peer)
         ESP_LOGW(TAG, "watch enrolled before bonding existed: hold BOOT 5 s and enrol it again");
     return true;
 }
