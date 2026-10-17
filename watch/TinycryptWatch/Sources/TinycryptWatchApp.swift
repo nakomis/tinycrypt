@@ -28,6 +28,12 @@ struct TinycryptWatchApp: App {
 
 final class AppDelegate: NSObject, WKApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching() {
+        #if DEBUG
+        // App Store screenshots (watch/ci/screenshots.sh): show a watch with a key added.
+        if ProcessInfo.processInfo.environment["TC_SCREENSHOT"] != nil {
+            UserDefaults.standard.set(UUID().uuidString, forKey: PresenceClient.peripheralIDKey)
+        }
+        #endif
         // Must be set before launch completes, or a background launch for an action is missed.
         let center = UNUserNotificationCenter.current()
         center.delegate = self
