@@ -89,7 +89,7 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
       # Unsigned compile check; installing on a watch needs Martin's signing identity.
-      - name: Build the iOS stub and the watch app it embeds
+      - name: Build the iPhone app and the watch app it embeds
         working-directory: watch/TinycryptWatch
         run: |
           xcodegen generate
@@ -182,6 +182,7 @@ jobs:
           xcodegen generate
           # Distribution builds get pushes from production APNs (the profile allows only that).
           plutil -replace aps-environment -string production Resources/TinycryptWatch.entitlements
+          plutil -replace aps-environment -string production Resources/TinycryptPhone.entitlements
           xcodebuild -project TinycryptWatch.xcodeproj -scheme TinycryptWatch -configuration Release \
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/TinycryptWatch.xcarchive" \
             -xcconfig ../ci/ci-signing.xcconfig \

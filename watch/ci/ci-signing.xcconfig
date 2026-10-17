@@ -1,6 +1,6 @@
 // CRYPT-27: CI's distribution signing for the TestFlight archive, layered over the XcodeGen project
 // (xcodebuild -xcconfig). Manual signing with CI's own Apple Distribution certificate and the two
-// App Store profiles (made through the API, fetched by name in CI): the iOS stub and the watch app
+// App Store profiles (made through the API, fetched by name in CI): the iPhone app and the watch app
 // are told apart by SDK. Local builds keep automatic signing.
 CODE_SIGN_STYLE = Manual
 DEVELOPMENT_TEAM = 62YFUFBSFX
