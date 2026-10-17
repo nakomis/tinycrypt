@@ -13,6 +13,8 @@ struct WifiSetupView: View {
     @State private var joining = false
     @State private var status: String?
     @State private var online = false
+    @FocusState private var passwordFocused: Bool
+    @State private var showPassword = false
 
     var body: some View {
         Form {
@@ -22,12 +24,48 @@ struct WifiSetupView: View {
                     Button("Done", action: onDone)
                 }
             } else if let chosen {
-                Section("Password for \(chosen.ssid)") {
-                    SecureField("Wi-Fi password", text: $password).textContentType(.password)
-                    Button(joining ? "Joining…" : "Join") { Task { await join(chosen.ssid) } }
-                        .disabled(joining || (chosen.secured && password.count < 8))
-                    Button("Choose another network") { self.chosen = nil; status = nil }.disabled(joining)
+                Section {
+                    // No content type: it's a Wi-Fi password, not a website login for the password manager.
+                    HStack {
+                        Group {
+                            if showPassword {
+                                TextField("Wi-Fi password", text: $password)
+                            } else {
+                                SecureField("Wi-Fi password", text: $password)
+                            }
+                        }
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .focused($passwordFocused)
+                        .disabled(joining)
+                        Button { toggleShowPassword() } label: {
+                            Image(systemName: showPassword ? "eye.slash" : "eye").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel(showPassword ? "Hide password" : "Show password")
+                    }
+                    .onAppear { passwordFocused = true }
+                    Button(showPassword ? "Hide password" : "Show password") { toggleShowPassword() }
+                        .buttonStyle(.borderless)
+                        .font(.footnote)
+                } header: {
+                    Text("Password for \(chosen.ssid)")
                 }
+                Section {
+                    VStack(spacing: 16) {
+                        Button { Task { await join(chosen.ssid) } } label: {
+                            Text(joining ? "Joining…" : "Join").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(joining || (chosen.secured && password.count < 8))
+                        Button("Choose another network") { self.chosen = nil; status = nil }
+                            .buttonStyle(.borderless)
+                            .disabled(joining)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .listRowBackground(Color.clear)
                 if let status { Section { Text(status) } }
             } else {
                 Section {
@@ -62,6 +100,12 @@ struct WifiSetupView: View {
         .task { await scan() }
     }
 
+    /// Swapping between the secure and plain fields would drop the keyboard; give it back.
+    private func toggleShowPassword() {
+        showPassword.toggle()
+        if !joining { passwordFocused = true }
+    }
+
     private func scan() async {
         scanning = true
         defer { scanning = false }
@@ -75,7 +119,12 @@ struct WifiSetupView: View {
 
     private func join(_ ssid: String) async {
         joining = true
-        defer { joining = false }
+        passwordFocused = false
+        // The password stays (greyed out) while the key tries it, and goes once it has worked or failed.
+        defer {
+            joining = false
+            password = ""
+        }
         status = "Sending to your key…"
         do {
             try await KeyActions.setWifi(key: key.peripheralID, ssid: ssid, password: password)
@@ -83,7 +132,6 @@ struct WifiSetupView: View {
             status = error.localizedDescription
             return
         }
-        password = ""
         // Joining and then reaching AWS takes a few seconds; the key says how it's going.
         for _ in 0..<15 {
             try? await Task.sleep(for: .seconds(3))

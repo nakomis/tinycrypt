@@ -38,8 +38,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     @MainActor
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        guard response.actionIdentifier == Presence.approve else { return }
         let notification = response.notification
+        // A plain tap opens the app on the request, with its own Approve button.
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+            KeysModel.shared.pending = PendingApproval(notification, keys: KeysModel.shared)
+            return
+        }
+        guard response.actionIdentifier == Presence.approve else { return }
         // SNS can't give APNs an expiry, so a push can turn up late: never act on a stale one.
         if let age = Presence.pushLatency(notification)?["sentToNowMs"].flatMap(Int.init), age > Presence.maxAgeMs {
             return

@@ -20,6 +20,8 @@ final class KeysModel: ObservableObject {
         return (try? JSONDecoder().decode([KnownKey].self, from: data)) ?? []
     }()
     @Published private(set) var token: String? = UserDefaults.standard.string(forKey: tokenKey)
+    /// A sign-in whose notification was tapped, shown full screen until approved, denied or closed.
+    @Published var pending: PendingApproval?
 
     func key(thing: String) -> KnownKey? { keys.first { $0.thing == thing } }
 

@@ -30,6 +30,9 @@ struct KeysView: View {
             .navigationTitle("tinycrypt")
             .navigationDestination(for: KnownKey.self) { KeyDetailView(key: $0) }
             .sheet(isPresented: $adding) { AddKeyView() }
+            .fullScreenCover(item: $model.pending) { pending in
+                ApproveView(pending: pending) { model.pending = nil }
+            }
             .task { await model.reregister() }
         }
     }
@@ -75,6 +78,11 @@ struct AddKeyView: View {
             Step(n: 2, text: "Hold its button for 5 seconds, until the light pulses magenta.")
             Step(n: 3, text: "Keep the key close to this phone, then tap Continue.")
             Spacer()
+            HStack(spacing: 10) {
+                Text("Is the key pulsing magenta?").font(.headline)
+                PulsingDot()
+            }
+            .frame(maxWidth: .infinity)
             Button { Task { await enrol() } } label: {
                 Text("Continue").frame(maxWidth: .infinity)
             }.buttonStyle(.borderedProminent).controlSize(.large)
@@ -92,6 +100,20 @@ struct AddKeyView: View {
         } catch {
             stage = .failed(error.localizedDescription)
         }
+    }
+}
+
+/// The key's enrol light: magenta, breathing.
+private struct PulsingDot: View {
+    @State private var bright = false
+    var body: some View {
+        Circle()
+            .fill(Color(red: 1, green: 0, blue: 1))
+            .frame(width: 18, height: 18)
+            .opacity(bright ? 1 : 0.2)
+            .animation(.easeInOut(duration: 1).repeatForever(autoreverses: true), value: bright)
+            .onAppear { bright = true }
+            .accessibilityLabel("pulsing magenta light")
     }
 }
 
