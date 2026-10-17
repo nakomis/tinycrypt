@@ -4,6 +4,8 @@ import SwiftUI
 struct WifiSetupView: View {
     let key: KnownKey
     let onDone: () -> Void
+    /// Screenshots only: shown instead of asking the key to scan.
+    var demoNetworks: [WifiNetwork]? = nil
 
     @State private var networks: [WifiNetwork] = []
     @State private var scanning = false
@@ -108,6 +110,10 @@ struct WifiSetupView: View {
     }
 
     private func scan() async {
+        if let demoNetworks {
+            networks = demoNetworks
+            return
+        }
         scanning = true
         defer { scanning = false }
         do {

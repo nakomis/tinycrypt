@@ -10,7 +10,7 @@ struct KeysView: View {
             List {
                 if !model.notificationsAllowed {
                     Section {
-                        Label("Notifications are off, so this phone can't ask you to approve sign-ins.",
+                        Label("Notifications are off, so this \(DeviceName.current) can't ask you to approve sign-ins.",
                               systemImage: "bell.slash")
                         Button("Turn them on in Settings") {
                             if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
@@ -65,7 +65,7 @@ struct KeysView: View {
     }
 }
 
-/// Adding a key: enrol this phone, then give the key its Wi-Fi.
+/// Adding a key: enrol this \(DeviceName.current), then give the key its Wi-Fi.
 struct AddKeyView: View {
     @EnvironmentObject private var model: KeysModel
     @Environment(\.dismiss) private var dismiss
@@ -103,7 +103,7 @@ struct AddKeyView: View {
         VStack(alignment: .leading, spacing: 20) {
             Step(n: 1, text: "Plug your key in.")
             Step(n: 2, text: "Hold its button for 5 seconds, until the light pulses magenta.")
-            Step(n: 3, text: "Keep the key close to this phone, then tap Continue. Allow notifications when asked: that's how the key asks you to approve.")
+            Step(n: 3, text: "Keep the key close to this \(DeviceName.current), then tap Continue. Allow notifications when asked: that's how the key asks you to approve.")
             Spacer()
             HStack(spacing: 10) {
                 Text("Is the key pulsing magenta?").font(.headline)
@@ -191,7 +191,7 @@ struct KeyDetailView: View {
             Section {
                 Button("Forget this key", role: .destructive) { confirmingForget = true }
             } footer: {
-                Text("Only on this phone. To stop this phone approving for the key, enrol another phone with it.")
+                Text("Only on this \(DeviceName.current). To stop it approving for the key, add the key to another iPhone or iPad.")
             }
         }
         .navigationTitle(key.name)

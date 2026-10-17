@@ -14,9 +14,9 @@ struct PendingApproval: Identifiable, Equatable {
         case unknownKey, noRequest, needsSetup(String)
         var errorDescription: String? {
             switch self {
-            case .unknownKey: return "That request came from a key this phone doesn't know."
-            case .noRequest: return "That notification isn't a request this phone can approve."
-            case .needsSetup(let name): return "This phone needs adding to \(name) again before it can approve."
+            case .unknownKey: return "That request came from a key this \(DeviceName.current) doesn't know."
+            case .noRequest: return "That notification isn't a request this \(DeviceName.current) can approve."
+            case .needsSetup(let name): return "This \(DeviceName.current) needs adding to \(name) again before it can approve."
             }
         }
     }

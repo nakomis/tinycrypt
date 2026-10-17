@@ -31,8 +31,17 @@ final class KeysModel: ObservableObject {
     /// This phone's Secure Enclave key, if it has one (a phone restored from a backup doesn't).
     let fingerprint: String? = KeyStore.existingKey().map(KeyStore.fingerprint)
 
+    /// Screenshots for the App Store (debug builds, TC_SCREENSHOT set): made-up keys, nothing saved.
+    private(set) var demo = false
+
+    func loadDemo() {
+        demo = true
+        keys = [KnownKey(thing: "tinycrypt-prod-key-1", peripheralID: UUID(), registeredToken: "demo", fingerprint: nil)]
+    }
+
     /// Enrolled with a key this phone no longer has: it can't approve until it's added again.
     func needsSetup(_ key: KnownKey) -> Bool {
+        if demo { return false }
         guard let enrolled = key.fingerprint else { return fingerprint == nil }
         return enrolled != fingerprint
     }
@@ -85,6 +94,7 @@ final class KeysModel: ObservableObject {
     }
 
     private func persist() {
+        guard !demo else { return }
         UserDefaults.standard.set(try? JSONEncoder().encode(keys), forKey: Self.keysKey)
     }
 }

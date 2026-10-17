@@ -22,7 +22,7 @@ enum KeyActions {
         var errorDescription: String? {
             switch self {
             case .expired: return "This request has expired. Try signing in again."
-            case .noKey: return "This phone needs adding to the key again."
+            case .noKey: return "This \(DeviceName.current) needs adding to the key again."
             case .wrongRequest: return "The key is asking about a different sign-in, so nothing was approved."
             }
         }

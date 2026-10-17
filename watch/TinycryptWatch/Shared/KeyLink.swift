@@ -6,7 +6,7 @@ import Foundation
 enum KeyLinkError: LocalizedError {
     case bluetooth(String)
     case notFound          // no key in enrol mode nearby
-    case unknownKey        // a saved key this phone can no longer find (a new phone, or forgotten in Settings)
+    case unknownKey        // a saved key this \(DeviceName.current) can no longer find (a new phone, or forgotten in Settings)
     case phoneBluetooth    // the phone's own Bluetooth never came up
     case timedOut(String)
     case disconnected(String)
@@ -19,12 +19,12 @@ enum KeyLinkError: LocalizedError {
         switch self {
         case .bluetooth(let why): return "Bluetooth is \(why)."
         case .notFound: return "No key found. Is it plugged in and pulsing magenta?"
-        case .unknownKey: return "This phone can't find that key any more. Remove it here, then add it again."
-        case .phoneBluetooth: return "This phone's Bluetooth isn't ready. Try again in a moment."
+        case .unknownKey: return "This \(DeviceName.current) can't find that key any more. Remove it here, then add it again."
+        case .phoneBluetooth: return "This \(DeviceName.current)'s Bluetooth isn't ready. Try again in a moment."
         case .timedOut: return "The key didn't answer. Is it plugged in and nearby?"
         case .disconnected: return "The connection to the key dropped. Try again."
         case .pairingLost:
-            return "The key and this phone no longer recognise each other. In Settings → Bluetooth, forget tinycrypt, then add the key again."
+            return "The key and this \(DeviceName.current) no longer recognise each other. In Settings → Bluetooth, forget tinycrypt, then add the key again."
         case .outdated: return "The key needs a firmware update for this."
         case .refused: return "The key said no. Try again, or press the button on the key."
         }
@@ -67,7 +67,7 @@ final class KeyLink: NSObject, @preconcurrency CBCentralManagerDelegate, @precon
         central = CBCentralManager(delegate: self, queue: nil)
     }
 
-    /// Connects to a key this phone already knows. Never scans: a key it can't find isn't silently
+    /// Connects to a key this \(DeviceName.current) already knows. Never scans: a key it can't find isn't silently
     /// swapped for whatever nearby device advertises the service (it could be told our Wi-Fi password).
     func open(peripheralID: UUID) async throws {
         try await poweredOn()

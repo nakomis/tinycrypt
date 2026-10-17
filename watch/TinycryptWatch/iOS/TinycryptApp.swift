@@ -9,13 +9,28 @@ struct TinycryptApp: App {
     @UIApplicationDelegateAdaptor private var delegate: AppDelegate
 
     var body: some Scene {
-        WindowGroup { KeysView().environmentObject(KeysModel.shared) }
+        WindowGroup {
+            #if DEBUG
+            if let screen = ProcessInfo.processInfo.environment["TC_SCREENSHOT"] {
+                ScreenshotView(screen: screen).environmentObject(KeysModel.shared)
+            } else {
+                KeysView().environmentObject(KeysModel.shared)
+            }
+            #else
+            KeysView().environmentObject(KeysModel.shared)
+            #endif
+        }
     }
 }
 
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["TC_SCREENSHOT"] != nil {
+            MainActor.assumeIsolated { KeysModel.shared.loadDemo() }
+        }
+        #endif
         // Must be set before launch completes, or a background launch for an action is missed.
         let center = UNUserNotificationCenter.current()
         center.delegate = self
