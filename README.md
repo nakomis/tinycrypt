@@ -1,5 +1,7 @@
 # tinycrypt — a DIY FIDO2 security key you approve from your Apple Watch
 
+<img src="docs/logo.png" alt="tinycrypt logo" width="200" align="right"/>
+
 ## Support
 
 If you find this useful, please consider buying me a coffee:
