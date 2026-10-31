@@ -77,9 +77,12 @@ First order, 16 Oct 2026: 5 boards, all assembled, about £110 with shipping, VA
 
 ## Cable
 
-J1 is a JST **SH 1.0 mm** 5-pin socket: 1 VBUS, 2 D−, 3 D+, 4 CC, 5 GND. No cable is made in that exact
-order, but a "USB to SH1.0 5P" cable in micro-USB order (VBUS, D−, D+, ID, GND; sold as "forward wire
-order") fits as is, its unused ID on pin 4. It's USB-A, so a USB-C host needs a USB-C-to-A (OTG) adapter,
+J1 is a JST **SH 1.0 mm** 5-pin socket: 1 VBUS, 2 D−, 3 D+, 4 CC, 5 GND, the house USB connector
+(below). The proper cable is LCSC Cable's custom one (quote requested 16 Oct, PO ref CRYPT-16): a bare
+USB-C plug (C393939, no resistor in it) to JST SHR-05V-S-B with SSH-003T-P0.2, UL1571 28 AWG, 150 mm,
+wired straight through (VBUS, D−, D+, CC on A5, GND; VCONN unconnected), so it works from any USB-C host
+or charger. Off the shelf, a "USB to SH1.0 5P" cable in micro-USB order (VBUS, D−, D+, ID, GND; sold as
+"forward wire order") fits as is, its unused ID on pin 4. It's USB-A, so a USB-C host needs a USB-C-to-A (OTG) adapter,
 whose plug carries the 5.1 kΩ on CC. Otherwise splice a USB cable to an SH1.0 5-pin pigtail (pigtail
 wire colours mean nothing: go by pin position; a USB-C plug needs CC wired to pin 4).
 
@@ -87,8 +90,24 @@ wire colours mean nothing: go by pin position; a USB-C plug needs CC wired to pi
   protection. (A breakout's ready-made JST lead turned out to be miswired, SDA on ground.)
 - An inline USB power meter on the first plug-in shows 5 V arriving and the current the key draws.
 
-**Next revision:** make J1 the common 4-pin SH1.0 order (VBUS, D−, D+, GND), with CC left to the
-cable's USB-C plug, so off-the-shelf "Type-C to SH1.0 4P" cables plug straight in.
+### House USB connector
+
+J1's layout is Martin's house standard for USB on his own boards (16 Oct 2026), so one cable fits them all:
+
+1. **Connector:** JST SM05B-SRSS-TB (SH 1.0 mm, 5-pin, right angle): 1 VBUS, 2 D−, 3 D+, 4 CC, 5 GND,
+   printed on the silkscreen.
+2. **CC:** one 5.1 kΩ from pin 4 to GND on every board. The cable carries CC straight through, so the
+   board's Rd is what makes a USB-C charger or a C-to-C host switch its 5 V on.
+3. **Power:** 5 V only (no PD), about 0.5 A in normal use and 1 A at most (the SH crimp's rating). A
+   hungrier board gets its own power connector.
+4. **Data:** USB 2.0 Full Speed (an S3's native USB, or a USB-serial chip).
+5. **Protection:** an ESD array on D+/D−, and on VBUS a polyfuse plus a TVS or reverse-polarity diode
+   (this board has neither yet: add them on the next revision).
+
+It stays 5-pin rather than the 4-pin SH order sold as "Type-C to SH1.0 4P" (decided 16 Oct 2026): a 4-pin
+cable has to carry the 5.1 kΩ in its plug, and cheap ones often don't (they then work from USB-A only);
+their pin orders vary anyway; and a 4-pin SH socket is also Qwiic/STEMMA QT, whose pin 1 is GND, so a USB
+lead plugged into one puts 5 V on ground. A 5-pin socket takes neither by mistake.
 
 ## Bring-up (each new board, into prod)
 
