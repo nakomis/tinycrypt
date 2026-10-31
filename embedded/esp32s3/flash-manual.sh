@@ -86,8 +86,15 @@ if $secured; then
     echo "eFuses for good: secure boot, flash encryption, JTAG off, secure download mode only."
     read -r -p "Type the chip's MAC (${mac}) to go on: " typed
     [ "$typed" = "$mac" ] || { echo "not flashed" >&2; exit 1; }
+    # One write: both args files start with the same --flash_mode/--flash_freq/--flash_size line, which
+    # esptool won't take twice, so the options once and every offset/file pair after them.
+    read -r -a options < flash_args
+    images=()
+    while read -r address file; do
+        images+=("$address" "$file")
+    done < <(tail -n +2 flash_bootloader_args; tail -n +2 flash_args)
     python -m esptool --chip esp32s3 -p "$1" -b 460800 --before "${ESPTOOL_BEFORE:-no_reset}" --after "${ESPTOOL_AFTER:-watchdog_reset}" write_flash \
-        --erase-all @flash_bootloader_args @flash_args "$offset" "${prov[0]}"
+        --erase-all "${options[@]}" "${images[@]}" "$offset" "${prov[0]}"
     exit
 fi
 python -m esptool --chip esp32s3 -p "$1" -b 460800 --before "${ESPTOOL_BEFORE:-no_reset}" --after "${ESPTOOL_AFTER:-watchdog_reset}" write_flash @flash_args \
