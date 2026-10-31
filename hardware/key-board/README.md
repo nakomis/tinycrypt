@@ -111,26 +111,37 @@ lead plugged into one puts 5 V on ground. A 5-pin socket takes neither by mistak
 
 ## Bring-up (each new board, into prod)
 
-Needs PR #17 (the ATECC firmware) merged. N is the key's number; add `key-N` to `prod` in
-`infra/keys.json` and `pnpm run deploy-prod` first (it creates the Thing).
+Every prod key runs the **secured** variant (CRYPT-34: secure boot v2, flash encryption in release mode,
+encrypted NVS). Its first boot burns eFuses for good, after which the key can only be updated over the
+air: there's no USB recovery. As first done for `nakomis`, 31 Oct 2026. `NAME` is the key's name (any
+lower-case name, e.g. `nakomis`): add it to `prod` in `infra/keys.json` and `pnpm run deploy-prod` first
+(that creates the Thing `tinycrypt-prod-NAME`).
 
 1. **Meter the cable** against J1 (1 VBUS, 2 D−, 3 D+, 4 CC or unconnected, 5 GND), and the board's
    3V3 to GND for a short, before the first plug-in. Plug in through the power meter: 5 V, tens of mA.
-2. **Provisioner** (PCB pins, so no `BOARD`): hold BOOT, plug in (a blank module enumerates as
+2. **Provisioner** (PCB pins, so no `BOARD`): hold BTN while plugging in (a blank module enumerates as
    USB-Serial-JTAG), then `KEYSTORE=atecc esp32s3/build.sh provisioner` and
    `esp32s3/flash-manual.sh --provisioner PORT`.
 3. `esp32s3/tools/atecc_provision.py PORT info` (a blank 608B: unlocked), `lock` (type the serial),
    then `check` (not `check full`: that's for a sacrificial chip).
-4. `atecc_provision.py PORT csr tinycrypt-prod-key-N FILE`, then
-   `NPM_ENVIRONMENT=prod AWS_PROFILE=nakom.is-prod infra/scripts/provision-key.sh key-N --csr FILE`
-   (`METRICS_URL=none` until home-servers' `vmauth_devices` has the key).
-5. Key image: `NPM_ENVIRONMENT=prod KEYSTORE=atecc esp32s3/build.sh`, then
-   `NPM_ENVIRONMENT=prod ESPTOOL_BEFORE=default_reset esp32s3/flash-manual.sh PORT tinycrypt-prod-key-N`.
-   After this the port is the FIDO device; reflash by holding BOOT while plugging in.
-6. Check it's online (it sends `version` on connect; Fleet prod lists it), enrol the watch (hold BOOT
-   5 s, "Enrol with key"; a watch that knew this board before must forget it first), `hw_smoke.py`.
-7. From then on, updates come from Fleet prod (CI publishes ATECC builds on merge once
-   `FIRMWARE_KEYSTORE` is `atecc`).
+4. `atecc_provision.py PORT csr tinycrypt-prod-NAME FILE`, then
+   `NPM_ENVIRONMENT=prod AWS_PROFILE=nakom.is-prod infra/scripts/provision-key.sh NAME --csr FILE --no-wifi`.
+   No Wi-Fi in `prov`: it's plain NVS, outside flash encryption, so the owner sets Wi-Fi from the iPhone
+   app instead (stored in the encrypted NVS). Metrics need the key's vmauth user first (home-servers'
+   `vmauth_devices` and SSM `/vmauth/device-tinycrypt-prod-NAME-password`); until then `METRICS_URL=none`.
+5. **Secured image:** `NPM_ENVIRONMENT=prod VARIANT=secured KEYSTORE=atecc esp32s3/build.sh` (a fresh
+   `build-secured/` if it last held a sandbox build: the bootloader is signed with prod and prod-backup,
+   the app with prod). Hold BTN while plugging in, then
+   `NPM_ENVIRONMENT=prod esp32s3/flash-manual.sh --secured PORT tinycrypt-prod-NAME` and type the chip's
+   MAC. It erases all the flash, writes the bootloader, table, app and `prov`, and reboots into the first
+   secure boot (burns secure boot, generates and burns the flash encryption key, encrypts the flash,
+   then the app makes and read-protects the NVS key): about 30 s, LED dark. It then enumerates as the
+   tinycrypt FIDO device.
+6. **Watch and phone:** forget any old entry for this key on the watch, enrol (hold BTN 5 s, "Add key"),
+   and give it Wi-Fi from the iPhone app. Check it: `tinycrypt_secured` and `tinycrypt_mqtt` are 1 in
+   VictoriaMetrics, `hw_smoke.py` passes.
+7. **Fleet:** set the device's firmware project to `tinycrypt-secured`. From then on updates come from
+   Fleet prod: CI publishes `tinycrypt-secured` on merge (the bytes the sandbox canary, Kitster, ran).
 
 ## As built, against DESIGN.md
 
