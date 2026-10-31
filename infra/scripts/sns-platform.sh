@@ -7,7 +7,7 @@
 #   infra/scripts/sns-platform.sh [--phone] --app-only
 #       just the platform application: tinycrypt-watch-{env}, or with --phone tinycrypt-phone-{env}
 #       (CRYPT-30: one per bundle ID, the iPhone app's and the watch app's)
-#   infra/scripts/sns-platform.sh [--phone] <device-token> --thing key-N
+#   infra/scripts/sns-platform.sh [--phone] <device-token> --thing <key name, e.g. key-1>
 #       subscribe a device to key-N's topic by hand. Normally a device registers itself by enrolling
 #       with the key (CRYPT-30); this is for migration and repairs.
 #
@@ -24,7 +24,7 @@ fi
 token=${1:?$usage}
 key=
 if [ "$token" != --app-only ]; then
-    [ "${2:-}" = --thing ] && [[ "${3:-}" =~ ^key-[0-9]+$ ]] || { echo "$usage" >&2; exit 2; }
+    [ "${2:-}" = --thing ] && [[ "${3:-}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || { echo "$usage" >&2; exit 2; }
     key=$3
 fi
 env=${NPM_ENVIRONMENT:-sandbox}
