@@ -21,7 +21,9 @@ set -euo pipefail
 umask 077
 
 here=$(cd "$(dirname "$0")" && pwd)
+bootloader=false
 if [ "${1:-}" = --bootloader ]; then
+    bootloader=true
     shift
     [ $# -eq 1 ] || { echo "usage: sign.sh --bootloader BOOTLOADER_BIN" >&2; exit 2; }
 fi
@@ -30,7 +32,9 @@ bin="$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")"
 env=${NPM_ENVIRONMENT:-sandbox}
 service=tinycrypt-ota-signing
 names=("$env")
-case "$(basename "$bin")" in bootloader*.bin) names+=("${env}-backup") ;; esac
+# The bootloader's key set comes from the flag, never the file name: its signature blocks are what the
+# first boot burns as trusted keys.
+if $bootloader; then names+=("${env}-backup"); fi
 pubs=()
 for name in "${names[@]}"; do
     pub="$here/ota-signing/${name}.pub.pem"

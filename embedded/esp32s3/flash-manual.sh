@@ -80,7 +80,12 @@ if $secured; then
         echo "secure boot is already on: this chip can only be updated over the air" >&2
         exit 1
     fi
-    mac=$(python -m esptool --chip esp32s3 -p "$1" --before no_reset --after no_reset read_mac 2>&1 | awk '/^MAC: / { print $2; exit }')
+    # Flash encryption on without secure boot is a half-burned chip: a plain write wouldn't boot. Stop.
+    if ! printf '%s\n' "$summary" | grep -E '^SPI_BOOT_CRYPT_CNT .*\(0b000\)' > /dev/null; then
+        echo "flash encryption has already been turned on (SPI_BOOT_CRYPT_CNT): not flashing" >&2
+        exit 1
+    fi
+    mac=$(python -m esptool --chip esp32s3 -p "$1" --before no_reset --after no_reset read_mac 2>&1 | awk '/^MAC: / && !seen { print $2; seen = 1 }')
     [ -n "$mac" ] || { echo "couldn't read the chip's MAC" >&2; exit 1; }
     echo "Flashing the secured variant ($env keys) ERASES ALL FLASH, and its first boot burns this chip's"
     echo "eFuses for good: secure boot, flash encryption, JTAG off, secure download mode only."
