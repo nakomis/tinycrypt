@@ -23,6 +23,8 @@
 #include <string.h>
 
 #include "esp_app_desc.h"
+#include "esp_flash_encrypt.h"
+#include "esp_secure_boot.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
@@ -90,6 +92,8 @@ static void metrics_task(void *arg)
                 {"heap_min", (int64_t)esp_get_minimum_free_heap_size()},
                 {"uptime_s", esp_timer_get_time() / 1000000},
                 {"rssi", ap.rssi},
+                // CRYPT-34: 1 once secure boot and flash encryption are both on (the chip's eFuses, not the build).
+                {"secured", esp_secure_boot_enabled() && esp_flash_encryption_enabled()},
                 {"mqtt", notifier_mqtt_connected()},
 #ifdef CONFIG_TINYCRYPT_WATCH_BLE
                 {"watch_enrolled", ble_presence_enrolled()},

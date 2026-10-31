@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # CRYPT-20: sign an unsigned image with one environment's key and publish it for Fleet, from CI.
 #
-#   embedded/esp32s3/tools/ci-publish.sh <sandbox|prod> <unsigned.bin> <x.y.z>
+#   embedded/esp32s3/tools/ci-publish.sh <sandbox|prod> <unsigned.bin> <x.y.z> [project]
+#
+# project is the firmware project, tinycrypt (the plain variant, the default) or tinycrypt-secured
+# (CRYPT-34); the image must say the same.
 #
 # A PR's build goes to sandbox; its merge sends the same unsigned bytes to prod, signed with prod's
 # key (the two signed images differ only in the signature block). The CI job has already checked the
 # build (version, configuration, per-key strings: tools/image-checks.sh); this signs, checks the
 # signature against the committed public key, and uploads
-# s3://nakomis-firmware-{env}/tinycrypt/<x.y.z>/firmware.bin with signed=true and its sha256, as
+# s3://nakomis-firmware-{env}/<project>/<x.y.z>/firmware.bin with signed=true and its sha256, as
 # publish-ota.sh does by hand.
 #
 # The signing key comes from SSM (/tinycrypt/{env}/ota/signing-key) through the job's OIDC role,
@@ -23,15 +26,18 @@ umask 077
 env=${1:?usage: ci-publish.sh <sandbox|prod> <unsigned.bin> <x.y.z>}
 unsigned=${2:?usage: ci-publish.sh <sandbox|prod> <unsigned.bin> <x.y.z>}
 version=${3:?usage: ci-publish.sh <sandbox|prod> <unsigned.bin> <x.y.z>}
+project=${4:-tinycrypt}
+case "$project" in tinycrypt | tinycrypt-secured) ;; *) echo "project must be tinycrypt or tinycrypt-secured" >&2; exit 2 ;; esac
 case "$env" in sandbox | prod) ;; *) echo "env must be sandbox or prod" >&2; exit 2 ;; esac
 [[ "$version" =~ ^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$ ]] || { echo "version must be x.y.z" >&2; exit 2; }
 here=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=image-checks.sh
 . "$here/tools/image-checks.sh"
 bucket="nakomis-firmware-${env}"
-object="tinycrypt/${version}/firmware.bin"
+object="${project}/${version}/firmware.bin"
 
 check_image_version "$unsigned" "$version"
+check_image_project "$unsigned" "$project"
 # The Wi-Fi SSID lives only in the sandbox account; the prod job publishes bytes the sandbox job
 # already checked for it.
 if [ "$env" = sandbox ]; then
@@ -54,7 +60,7 @@ unsigned_sha=$(sha256sum "$unsigned" | cut -d' ' -f1)
 
 if existing=$(aws s3api head-object --bucket "$bucket" --key "$object" --query 'Metadata."unsigned-sha256"' --output text 2> /dev/null); then
     if [ "$existing" = "$unsigned_sha" ]; then
-        echo "tinycrypt ${version} is already published to ${env} with these bytes"
+        echo "${project} ${version} is already published to ${env} with these bytes"
         exit 0
     fi
     echo "s3://${bucket}/${object} already exists with other bytes: a published version is never replaced" >&2
@@ -63,4 +69,4 @@ fi
 # --if-none-match: never replaced, even by a publish racing this one.
 aws s3api put-object --bucket "$bucket" --key "$object" --body "$dir/signed.bin" --if-none-match '*' \
     --content-type application/octet-stream --metadata "signed=true,sha256=${sha},unsigned-sha256=${unsigned_sha}" > /dev/null
-echo "published tinycrypt ${version} (sha256 ${sha}) to s3://${bucket}/${object}"
+echo "published ${project} ${version} (sha256 ${sha}) to s3://${bucket}/${object}"

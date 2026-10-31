@@ -8,6 +8,9 @@
 # BOARD=cam adds sdkconfig.board-cam.defaults (the camera dev board's pins); no BOARD is the PCB.
 # Defaults only apply to a fresh sdkconfig, so when the board differs from the last build's
 # (remembered next to its sdkconfig, in .board) that sdkconfig is removed first.
+# VARIANT (CRYPT-34): plain (the default: build/, tinycrypt.bin) or secured (build-secured/,
+# tinycrypt-secured.bin, sdkconfig.secured.defaults: secure boot v2, flash and NVS encryption). A secured
+# build signs its bootloader too, with the environment's key and its backup (sign.sh --bootloader).
 # Images must be signed (CRYPT-14), so don't flash with `idf.py flash`: it would write the unsigned one.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -45,9 +48,22 @@ if [ "${1:-}" = provisioner ]; then
     ./sign.sh build-provisioner/tinycrypt.bin
     exit
 fi
-switch_board sdkconfig
+case "${VARIANT:-plain}" in
+    plain) build=build sdkconfig=sdkconfig project=tinycrypt variant=() ;;
+    secured)
+        build=build-secured sdkconfig=build-secured/sdkconfig project=tinycrypt-secured
+        defaults="$defaults;sdkconfig.secured.defaults"
+        variant=(-B build-secured -DSDKCONFIG=build-secured/sdkconfig) ;;
+    *) echo "VARIANT must be plain or secured" >&2; exit 2 ;;
+esac
+switch_board "$sdkconfig"
+args=("${keystore[@]}" "-DTINYCRYPT_VARIANT=${VARIANT:-plain}" "-DSDKCONFIG_DEFAULTS=$defaults")
+if [ ${#variant[@]} -gt 0 ]; then args=("${variant[@]}" "${args[@]}"); fi
 if [ $# -gt 0 ]; then
-    exec idf.py "${keystore[@]}" "-DSDKCONFIG_DEFAULTS=$defaults" "$@"
+    exec idf.py "${args[@]}" "$@"
 fi
-idf.py "${keystore[@]}" "-DSDKCONFIG_DEFAULTS=$defaults" build
-./sign.sh build/tinycrypt.bin
+idf.py "${args[@]}" build
+./sign.sh "$build/$project.bin"
+if [ "${VARIANT:-plain}" = secured ]; then
+    ./sign.sh --bootloader "$build/bootloader/bootloader.bin"
+fi

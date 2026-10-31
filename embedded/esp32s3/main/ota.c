@@ -32,7 +32,6 @@ static const char *TAG = "ota";
 
 extern const char root_ca_start[] asm("_binary_AmazonRootCA1_pem_start");
 
-#define PROJECT "tinycrypt"
 #define NVS_NAMESPACE "ota"
 #define NVS_TARGET "target"  // the version an approved install restarted into
 #define NVS_TARGET_SLOT "target_slot"  // and its slot (a reinstall of the same version rolls back too)
@@ -138,7 +137,7 @@ static void respond_version(void)
 {
     cJSON *msg = message("version");
     cJSON_AddStringToObject(msg, "version", running_version());
-    cJSON_AddStringToObject(msg, "project", PROJECT);
+    cJSON_AddStringToObject(msg, "project", esp_app_get_description()->project_name);
     respond(msg);
 }
 
@@ -161,7 +160,7 @@ void ota_boot(bool local_selftest_ok)
     const esp_partition_t *running = esp_ota_get_running_partition();
     esp_ota_img_states_t state;
     bool pending = esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY;
-    ESP_LOGI(TAG, "running %s %s from %s%s", PROJECT, running_version(), running->label,
+    ESP_LOGI(TAG, "running %s %s from %s%s", esp_app_get_description()->project_name, running_version(), running->label,
              pending ? " (new image, on probation)" : "");
     if (!pending)
         return;
@@ -390,7 +389,7 @@ static const char *download(const esp_partition_t *slot, char *why, size_t why_l
         goto out;
     }
     esp_app_desc_t desc;
-    if (esp_ota_get_partition_description(slot, &desc) != ESP_OK || strcmp(desc.project_name, PROJECT) != 0 ||
+    if (esp_ota_get_partition_description(slot, &desc) != ESP_OK || strcmp(desc.project_name, esp_app_get_description()->project_name) != 0 ||
         strcmp(desc.version, job_version) != 0)
     {
         err_text = "wrong image";

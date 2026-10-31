@@ -1,9 +1,8 @@
 {
   "sandbox": [
-    "key-1"
+    "kitster"
   ],
   "prod": [
-    "key-1",
     "nakomis"
   ]
 }

@@ -81,7 +81,7 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   `KEYSTORE=atecc esp32s3/build.sh`) and `port/se_soft.c`, an INSECURE stand-in (sim file, ESP32 NVS) for
   `TINYCRYPT_INSECURE_SOFT_KEY` builds (the default until the chip is proven). **Scheme A** (Martin, 12 Oct):
   per-site keys are HMAC(master, `tc-cred-key` ‖ ctr ‖ credential ID), built in RAM, used once, wiped; so
-  until secure boot is on, anyone who can flash the key can clone it (secure boot completes it, later).
+  anyone who can flash the key can clone it, so prod keys run the secured variant (CRYPT-34, below).
   solo1's `crypto.c` is compiled with its secret-handling functions renamed `solo_*` (`SOLO_CRYPTO_DEFINES`)
   and `port/crypto_tc.c` replaces them: HMACs with solo1's MASTER/TRANSPORT keys go to the element with a
   label each (message ≤ 228 bytes, the ATECC's SHA limit), attestation signs on the element, Ed25519 too.
@@ -112,14 +112,14 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   bytes at most), and a credential's key is derived inside the sign call, never left loaded (U2F loads
   before asking presence). A missing or corrupt authenticator state rolls the master too
   (`crypto_tc_state_missing`): solo1 then starts with no PIN, so old credentials must not survive.
-  Still open until flash encryption: the PIN hash sits in plain NVS, so a flash dump can brute-force a
-  short PIN offline. The attestation certificate is checked against the element's key at boot and
+  On a plain (unsecured) board the PIN hash sits in plain NVS, so a flash dump can brute-force a short PIN
+  offline; secured keys encrypt NVS (CRYPT-34). The attestation certificate is checked against the element's key at boot and
   remade after a change of chip or keystore. The provisioner locks slots 0 and 1 after GenKey
   (a locked slot is how a rerun, and `se_init`, know the key is ours; it also stops any firmware
   replacing them). Every chip call holds one mutex (CTAP and MQTT tasks). A board whose ATECC has worked is marked in
   NVS (`ks_atecc`) and refuses a soft-key image, so a wrong update rolls back. Without a working element
   there's no CTAP (LED fault) and, since the IoT TLS key is in the element too, no IoT connection, so no
-  updates either: a key whose element fails is reflashed over USB. (A new image without one rolls back.)
+  updates either: a plain key whose element fails is reflashed over USB; a secured one is dead. (A new image without one rolls back.)
 - **Soft key is INSECURE, TEST ONLY**: gated behind `TINYCRYPT_INSECURE_SOFT_KEY`, loud boot
   banner, must not build in release config. Only ever register it against the read-only Identity Center test user.
 - **Watch signature convention** (CRYPT-10, proven with a real Secure Enclave key): the watch signs
@@ -184,8 +184,8 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   refused), answers on `/responses` (a `version` message on every connect, `ota_progress`, `ota_error`,
   `ota_complete`). The key downloads over HTTPS (Amazon Root CA 1, committed as `esp32s3/AmazonRootCA1.pem`)
   into the spare slot, hashing as it goes, then refuses it unless: SHA-256 = Fleet's; `esp_ota_end` passes
-  (signature by the key that signed the **running** image); `esp_app_desc` says `tinycrypt` at that
-  version; not a downgrade. Only then a 60 s presence wait, run by the CTAP task while idle
+  (plain: signed by the key that signed the **running** image; secured: by a key whose digest is in eFuse);
+  `esp_app_desc` names the running image's own project (`tinycrypt` or `tinycrypt-secured`) and that version; not a downgrade. Only then a 60 s presence wait, run by the CTAP task while idle
   (`presence_wait_external`: no owning channel, CTAP gets BUSY meanwhile), bound to
   SHA-256(`"tinycrypt-ota-v1"` ‖ image SHA-256 ‖ version) with the push "Install tinycrypt x.y.z?"; the
   watch needs no change. Approved → NVS `ota/target`, switch slot, restart. **Probation:** a new image
@@ -219,13 +219,34 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   UART port (the OTA path doesn't need USB HID).
 - **Flash layout** (`partitions.csv`, fits 4 MB; the boards have 16 MB): `nvs` and `phy` at IDF's
   single-app offsets (so NVS survived the move), `otadata`, `prov`, two 1.875 MB app slots, coredump.
-  Moving from the old single-app layout needs one wired flash (bootloader with rollback included).
+  Moving from the old single-app layout needs one wired flash (bootloader with rollback included). The
+  secured variant has its own table, `partitions-secured.csv`, at 0xC000 (its bootloader is 44 KB signed,
+  too big for 0x8000): the small partitions move up, the app slots don't. The variants never update each other.
+- **Secured variant** (CRYPT-34, `VARIANT=secured build.sh`, `sdkconfig.secured.defaults`, project name
+  `tinycrypt-secured`): secure boot v2 (RSA-3072), flash encryption in **release** mode (XTS-AES-256 key made
+  on the chip), JTAG off, ROM download only in secure mode (no reads), NVS encrypted with an HMAC key in eFuse
+  KEY5. App and bootloader are built with matching security settings, as ESP-IDF expects, so it's a second
+  build, not a runtime switch: **plain** (`tinycrypt`) is for the sandbox dev boards, which never burn eFuses;
+  **secured** is for prod keys and the sandbox canary **Kitster** (`tinycrypt-sandbox-kitster`, a dev board
+  with key-1's old 608A on the PCB's I2C pins, burned 31 Oct). A key refuses an update of the other variant
+  (project name). `sign.sh --bootloader` signs the bootloader with the environment's key **and its backup**
+  (`ota-signing-key.sh --backup`: SSM `/tinycrypt/{env}/ota/signing-key-backup`, Keychain `{env}-backup`,
+  never used routinely); the first boot burns both digests and revokes the third slot, so the backup can
+  sign an update that revokes the main key. `flash-manual.sh --secured PORT THING` (typed MAC, full erase,
+  bootloader too) is the only USB write a secured key ever gets: afterwards it's **OTA only**. First-boot
+  gotcha (found on Kitster): secure boot burns `WR_DIS_RD_DIS` at once, before the app makes the NVS key, so
+  that key couldn't be read-protected (the app aborted, then ran on the next boot with it readable; Kitster
+  keeps that). Fixed by `SECURE_BOOT_V2_ALLOW_EFUSE_RD_DIS`: the app burns `WR_DIS_RD_DIS` itself once the key
+  is protected (`lock_efuse_read_protection`). `prov` stays plain NVS (secured keys get it `--no-wifi`; the
+  owner sets Wi-Fi from the iPhone app, into the encrypted NVS). Metric `tinycrypt_secured` is 1 when the
+  chip's eFuses have secure boot and flash encryption on. The first boot's log is only on UART0 (the PCB's
+  RX/TX pads); a dev board's UART port shows it. The IDF Python env needs `bitstring<5` (5.0 broke espefuse).
 - **Signed images** (`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT`, RSA-3072, the secure boot v2 scheme):
   every app image is signed, dev builds included, because an update must be signed like the running
   one. `build.sh` builds then `sign.sh` signs (never `idf.py flash`: unsigned). The key is in SSM
   `/tinycrypt/{env}/ota/signing-key` (master) and the Keychain (`tinycrypt-ota-signing`/`{env}`, base64);
   made once by `infra/scripts/ota-signing-key.sh` (sandbox public key digest `2d1d16f2…`). Replacing it
-  strands every key in the field. Without secure boot this protects updates, not a USB cable. The
+  strands every key in the field. On a plain board this protects updates, not a USB cable. The
   public half is committed (`esp32s3/ota-signing/{env}.pub.pem`): `sign.sh`, `flash-manual.sh` and
   `publish-ota.sh` check images against it, so one signed by another key (which would boot, then refuse
   every update) is refused, and an already-signed image needs no Keychain read. The private key never
@@ -239,7 +260,9 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   to a PR is a new version. **The merge** publishes the same unsigned bytes, signed with the prod key, to
   prod: the job finds the PR's last successful run, and refuses unless main's tree is the one that build
   came from (if main moved on, re-run the PR's CI). **Prod takes only ATECC builds**, so while
-  `FIRMWARE_KEYSTORE` is `soft` a merge publishes nothing to prod. The signing keys come from SSM through
+  `FIRMWARE_KEYSTORE` is `soft` a merge publishes nothing to prod. ATECC runs build **both variants**
+  (CRYPT-34): sandbox gets `tinycrypt` and `tinycrypt-secured`, prod **only** `tinycrypt-secured`, the bytes
+  Kitster ran. Fleet picks a device's builds by its registry `firmwareProject`. The signing keys come from SSM through
   `TinycryptGithubCiStack`'s roles (`nakomis-tinycrypt-github-ci-{env}`, repo variables
   `AWS_{SANDBOX,PROD}_ROLE_ARN`): sandbox trusts any ref of this repo, prod only `main` (only Martin merges).
   RSA-PSS signatures are salted, so a re-run compares the `unsigned-sha256` metadata. `version.txt` only
@@ -308,11 +331,9 @@ The old ATtiny85/U2F scaffold is on the `spike` branch, not `main`.
   `deploy-prod` (profile `nakom.is-prod`; asks before IAM changes, and only with Martin's OK). The account
   comes from the profile, never a literal. **Keys are listed per environment in `infra/keys.json`**
   (CRYPT-26): a deploy declares every key, so add one there before `provision-key.sh`; a key missing from
-  the list has its Thing deleted. **Prod** (CRYPT-26, CRYPT-29): one key so far, `tinycrypt-prod-key-1`,
-  a **throwaway** (16 Oct): the ATECC camera dev board (`BOARD=cam`), prod-signed, no metrics (no vmauth user
-  yet), no secure boot or flash encryption. It's updated **by wire only**: CI's images use the PCB's pins, so
-  one from Fleet would lose its chip and roll back. The PCB keys replace it (bring-up checklist:
-  `hardware/key-board/README.md`). Prod pushes need a distribution-signed (TestFlight) watch build, since a
+  the list has its Thing deleted. Key names are any lower-case name (PR #32). **Prod**: `nakomis`, Martin's own PCB key, secured
+  31 Oct (bring-up checklist: `hardware/key-board/README.md`). **Sandbox**: `kitster`, the secured canary.
+  key-1 (the camera dev board) was retired on 31 Oct: its certificates deleted, its ATECC is Kitster's. Prod pushes need a distribution-signed (TestFlight) watch build, since a
   development build only gets APNs sandbox pushes (CRYPT-27); the watch's production token is registered
   (`sns-platform.sh`, prod). The house Wi-Fi is only in sandbox SSM.
 

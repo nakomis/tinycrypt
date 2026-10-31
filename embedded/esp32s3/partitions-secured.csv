@@ -1,0 +1,14 @@
+# Name,   Type, SubType,  Offset,   Size,  Flags
+# The secured variant (CRYPT-34). Its bootloader (secure boot v2 + flash encryption) is 40 KB, too
+# big for the plain build's table at 0x8000, so the table sits at 0xC000
+# (CONFIG_PARTITION_TABLE_OFFSET in sdkconfig.secured.defaults) and the small partitions move up
+# behind it. The app slots are where the plain layout has them. The two variants never update each
+# other, so they needn't share a layout. coredump is encrypted (flash encryption requires it); NVS
+# partitions never are (nvs and prov: NVS encryption is separate).
+nvs,      data, nvs,      0xD000,   0x6000
+phy_init, data, phy,      0x13000,  0x1000
+otadata,  data, ota,      0x14000,  0x2000
+prov,     data, nvs,      0x16000,  0x6000
+ota_0,    app,  ota_0,    0x20000,  1920K
+ota_1,    app,  ota_1,    0x200000, 1920K
+coredump, data, coredump, 0x3E0000, 64K,   encrypted
