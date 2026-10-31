@@ -297,7 +297,11 @@ jobs:
           VERSION: ${{ steps.compute.outputs.version }}
         run: |
           v=$VERSION
-          while aws s3api head-object --bucket nakomis-firmware-sandbox --key "tinycrypt/$v/firmware.bin" > /dev/null 2>&1; do
+          published() {
+            aws s3api head-object --bucket nakomis-firmware-sandbox --key "tinycrypt/$1/firmware.bin" > /dev/null 2>&1 ||
+              aws s3api head-object --bucket nakomis-firmware-sandbox --key "tinycrypt-secured/$1/firmware.bin" > /dev/null 2>&1
+          }
+          while published "$v"; do
             IFS=. read -r a b c <<< "$v"; v="$a.$b.$((c + 1))"
           done
           [ "$v" = "$VERSION" ] || echo "::notice::$VERSION is already published; using $v"
@@ -332,14 +336,28 @@ jobs:
             atecc) keystore=(-DTINYCRYPT_INSECURE_SOFT_KEY=OFF -DTINYCRYPT_KEYSTORE_ATECC=ON) ;;
             *) echo "FIRMWARE_KEYSTORE must be soft or atecc"; exit 1 ;;
           esac
+          # CRYPT-34: the plain variant (tinycrypt, the sandbox dev boards) and, for ATECC builds, the
+          # secured one (tinycrypt-secured: secure boot, flash and NVS encryption; prod keys and the
+          # sandbox canary). Same commit, same version; only the secured one goes to prod.
           idf.py "${keystore[@]}" build
           . tools/image-checks.sh
           check_image_version build/tinycrypt.bin "$VERSION"
+          check_image_project build/tinycrypt.bin tinycrypt
           check_image_config build/config/sdkconfig.h false
           check_image_strings build/tinycrypt.bin sandbox
           check_image_strings build/tinycrypt.bin prod
           mkdir -p ../../firmware
           cp build/tinycrypt.bin ../../firmware/tinycrypt-unsigned.bin
+          if [ "$FIRMWARE_KEYSTORE" = atecc ]; then
+            idf.py -B build-secured -DSDKCONFIG=build-secured/sdkconfig -DTINYCRYPT_VARIANT=secured \
+              "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.secured.defaults" "${keystore[@]}" build
+            check_image_version build-secured/tinycrypt-secured.bin "$VERSION"
+            check_image_project build-secured/tinycrypt-secured.bin tinycrypt-secured
+            check_image_config build-secured/config/sdkconfig.h false
+            check_image_strings build-secured/tinycrypt-secured.bin sandbox
+            check_image_strings build-secured/tinycrypt-secured.bin prod
+            cp build-secured/tinycrypt-secured.bin ../../firmware/tinycrypt-secured-unsigned.bin
+          fi
           printf '{\n  "version": "%s"\n}\n' "$VERSION" > ../../firmware/version.json
           echo "$FIRMWARE_KEYSTORE" > ../../firmware/keystore
           # What main must hold for the merge to publish these bytes (see firmware-prod).
@@ -371,7 +389,11 @@ jobs:
       - name: Sign and publish
         env:
           VERSION: ${{ needs.firmware-version.outputs.version }}
-        run: embedded/esp32s3/tools/ci-publish.sh sandbox firmware/tinycrypt-unsigned.bin "$VERSION"
+        run: |
+          embedded/esp32s3/tools/ci-publish.sh sandbox firmware/tinycrypt-unsigned.bin "$VERSION" tinycrypt
+          if [ -f firmware/tinycrypt-secured-unsigned.bin ]; then
+            embedded/esp32s3/tools/ci-publish.sh sandbox firmware/tinycrypt-secured-unsigned.bin "$VERSION" tinycrypt-secured
+          fi
       - name: Record deployment
         uses: nakomis/nakomis-infra/.github/actions/record-deployment@main
         with:
@@ -412,6 +434,8 @@ jobs:
             exit 1
           fi
           [ "$(cat firmware/keystore)" = atecc ] || skip "PR #$pr's build uses the $(cat firmware/keystore) keystore; prod takes only ATECC builds"
+          # CRYPT-34: prod takes only the secured variant, the bytes the sandbox canary ran.
+          [ -f firmware/tinycrypt-secured-unsigned.bin ] || skip "PR #$pr's build has no secured variant"
           echo "version=$(jq -r .version firmware/version.json)" >> "$GITHUB_OUTPUT"
           echo "publish=true" >> "$GITHUB_OUTPUT"
       - if: steps.find.outputs.publish == 'true'
@@ -425,7 +449,7 @@ jobs:
         if: steps.find.outputs.publish == 'true'
         env:
           VERSION: ${{ steps.find.outputs.version }}
-        run: embedded/esp32s3/tools/ci-publish.sh prod firmware/tinycrypt-unsigned.bin "$VERSION"
+        run: embedded/esp32s3/tools/ci-publish.sh prod firmware/tinycrypt-secured-unsigned.bin "$VERSION" tinycrypt-secured
       - name: Record deployment
         if: steps.find.outputs.publish == 'true'
         uses: nakomis/nakomis-infra/.github/actions/record-deployment@main

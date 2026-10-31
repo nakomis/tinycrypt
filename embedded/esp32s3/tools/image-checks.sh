@@ -9,12 +9,28 @@ check_image_version() { # bin version
     [ "$built" = "$2" ] || { echo "the image says version '$built', not $2" >&2; exit 1; }
 }
 
+# The image is this firmware project's: tinycrypt (plain) or tinycrypt-secured (CRYPT-34). Fleet
+# offers each key its own project's images, and a key installs only its own.
+check_image_project() { # bin project
+    local built
+    built=$(python -m esptool --chip esp32s3 image_info --version 2 "$1" 2> /dev/null | awk -F': *' '/^Project name/ { print $2 }')
+    [ "$built" = "$2" ] || { echo "the image is project '$built', not $2" >&2; exit 1; }
+}
+
 # The build's configuration (its sdkconfig.h) is one that may be published.
 check_image_config() { # sdkconfig.h test_rollback(true|false)
     local config=$1 test_rollback=$2 option deadline
     # It can be updated (the notifier), it's checked on probation (rollback), and it checks the
-    # next one's signature.
-    for option in CONFIG_TINYCRYPT_NOTIFIER CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT; do
+    # next one's signature: against the running image's key (plain) or the eFuse digests (secured,
+    # CRYPT-34, which must also have flash encryption in release mode and encrypted NVS).
+    local options=(CONFIG_TINYCRYPT_NOTIFIER CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE)
+    if grep -q '^#define CONFIG_SECURE_BOOT 1$' "$config"; then
+        options+=(CONFIG_SECURE_BOOT_V2_ENABLED CONFIG_SECURE_FLASH_ENC_ENABLED CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE
+            CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE CONFIG_NVS_ENCRYPTION CONFIG_NVS_SEC_KEY_PROTECT_USING_HMAC)
+    else
+        options+=(CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT)
+    fi
+    for option in "${options[@]}"; do
         grep -q "^#define ${option} 1$" "$config" || { echo "the build lacks ${option}: not publishing" >&2; exit 1; }
     done
     if grep -q '^#define CONFIG_TINYCRYPT_OTA_FAIL_SELFTEST 1$' "$config" && ! $test_rollback; then
