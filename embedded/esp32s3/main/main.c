@@ -23,6 +23,10 @@
 #include "driver/gpio.h"
 #include "esp_core_dump.h"
 #include "esp_log.h"
+#ifdef CONFIG_SECURE_BOOT_V2_ALLOW_EFUSE_RD_DIS
+#include "esp_efuse.h"
+#include "esp_efuse_table.h"
+#endif
 #include "esp_ota_ops.h"
 #include "esp_random.h"
 #include "esp_system.h"
@@ -501,6 +505,31 @@ void ctap_overwrite_rk(int index, CTAP_residentKey *rk)
 // Print the saved core dump's summary (task, PC, backtrace) at boot, so a crash
 // can be read over the UART console without download mode. Decode with
 // xtensa-esp32s3-elf-addr2line -pfiaC -e build/tinycrypt.elf <addresses>.
+#ifdef CONFIG_SECURE_BOOT_V2_ALLOW_EFUSE_RD_DIS
+// CRYPT-34, the secured variant. Turning secure boot on normally burns WR_DIS_RD_DIS straight away, after
+// which no eFuse can be read-protected; but nvs_flash_init() makes the NVS HMAC key (which must be
+// read-protected) later, here in the app, so that burn failed on Kitster's first boot and left its key
+// readable. So the secured build defers WR_DIS_RD_DIS (CONFIG_SECURE_BOOT_V2_ALLOW_EFUSE_RD_DIS) and burns
+// it here, once that key is read-protected, as ESP-IDF's secure boot guide asks. Only signed code runs in
+// between, and only on the first boot.
+static void lock_efuse_read_protection(void)
+{
+    if (esp_efuse_read_field_bit(ESP_EFUSE_WR_DIS_RD_DIS))
+        return;
+    esp_efuse_block_t block = EFUSE_BLK_KEY0 + CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID;
+    if (!esp_efuse_get_key_dis_read(block) && esp_efuse_set_read_protect(block) != ESP_OK)
+    {
+        ESP_LOGE(TAG, "couldn't read-protect the NVS key: eFuse read protection left open");
+        return;
+    }
+    esp_err_t err = esp_efuse_write_field_bit(ESP_EFUSE_WR_DIS_RD_DIS);
+    if (err == ESP_OK)
+        ESP_LOGI(TAG, "NVS key read-protected; no further eFuse can be (WR_DIS_RD_DIS)");
+    else
+        ESP_LOGE(TAG, "couldn't burn WR_DIS_RD_DIS (%s)", esp_err_to_name(err));
+}
+#endif
+
 static void report_last_crash(void)
 {
     if (esp_core_dump_image_check() != ESP_OK)
@@ -660,6 +689,9 @@ void app_main(void)
             esp_ota_mark_app_invalid_rollback_and_reboot();
         abort();
     }
+#ifdef CONFIG_SECURE_BOOT_V2_ALLOW_EFUSE_RD_DIS
+    lock_efuse_read_protection();
+#endif
     ESP_ERROR_CHECK(nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs));
     if (!nvs_read("rk", rk_store, sizeof(rk_store)))
         ctap_reset_rk();

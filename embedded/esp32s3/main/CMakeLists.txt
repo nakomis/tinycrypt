@@ -34,7 +34,7 @@ endif()
 # WHOLE_ARCHIVE so the port's strong device hooks always win over solo1's weak defaults.
 idf_component_register(
   SRCS ${srcs}
-  PRIV_REQUIRES solo_core nvs_flash esp_driver_gpio esp_timer bootloader_support espcoredump mbedtls
+  PRIV_REQUIRES solo_core nvs_flash efuse esp_driver_gpio esp_timer bootloader_support espcoredump mbedtls
                 esp_wifi esp_netif esp_event mqtt json bt app_update esp_http_client esp_app_format
                 espressif__esp-cryptoauthlib espressif__libsodium esp_driver_uart esp_driver_i2c esp_driver_usb_serial_jtag esp_vfs_console
   EMBED_TXTFILES ${embed}

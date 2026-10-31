@@ -5,6 +5,9 @@
 #   secure boot: the digests of every key that signed it (sign.sh: the env's key and its backup)
 #   flash encryption: an XTS-AES-256 key it generates itself (never leaves the chip)
 #   release mode: JTAG off, ROM download only in secure download mode (no reads), no manual encrypt
+# Secure boot would burn WR_DIS_RD_DIS at once, so the NVS key (read-protected, made by the app) couldn't be
+# protected: the app burns it instead, once the key is (main.c, lock_efuse_read_protection).
+CONFIG_SECURE_BOOT_V2_ALLOW_EFUSE_RD_DIS=y
 # NVS: the default partition is encrypted with keys derived from an HMAC key the app generates into
 # eFuse block 5 on first boot. prov stays plain (nvs_flash_init_partition), written by the host.
 # CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT is not set
