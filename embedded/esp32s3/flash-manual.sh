@@ -11,6 +11,8 @@
 #       signed bootloader too, and asks for the chip's MAC to be typed. Its first boot then burns the
 #       eFuses (secure boot, flash encryption, release mode) for good, after which this can't flash it
 #       again: secured keys are updated only over the air.
+# ESPTOOL_AFTER=no_reset leaves the chip in download mode after writing (e.g. to start a serial log first,
+# then press RST to watch the first boot).
 # ESPTOOL_BEFORE=default_reset skips BOOT+RST when the chip's USB-Serial-JTAG is up (the native port
 # unless firmware using TinyUSB is running, as the key image does).
 # Writes the bootloader, partition table, OTA data and the (signed, see build.sh) app, plus the
@@ -51,7 +53,7 @@ if $secured; then
 fi
 
 if $provisioner; then
-    python -m esptool --chip esp32s3 -p "$1" -b 460800 --before "${ESPTOOL_BEFORE:-no_reset}" --after watchdog_reset write_flash @flash_args
+    python -m esptool --chip esp32s3 -p "$1" -b 460800 --before "${ESPTOOL_BEFORE:-no_reset}" --after "${ESPTOOL_AFTER:-watchdog_reset}" write_flash @flash_args
     echo "provisioner flashed: esp32s3/tools/atecc_provision.py $1 info"
     exit
 fi
@@ -84,9 +86,9 @@ if $secured; then
     echo "eFuses for good: secure boot, flash encryption, JTAG off, secure download mode only."
     read -r -p "Type the chip's MAC (${mac}) to go on: " typed
     [ "$typed" = "$mac" ] || { echo "not flashed" >&2; exit 1; }
-    python -m esptool --chip esp32s3 -p "$1" -b 460800 --before "${ESPTOOL_BEFORE:-no_reset}" --after watchdog_reset write_flash \
+    python -m esptool --chip esp32s3 -p "$1" -b 460800 --before "${ESPTOOL_BEFORE:-no_reset}" --after "${ESPTOOL_AFTER:-watchdog_reset}" write_flash \
         --erase-all @flash_bootloader_args @flash_args "$offset" "${prov[0]}"
     exit
 fi
-python -m esptool --chip esp32s3 -p "$1" -b 460800 --before "${ESPTOOL_BEFORE:-no_reset}" --after watchdog_reset write_flash @flash_args \
+python -m esptool --chip esp32s3 -p "$1" -b 460800 --before "${ESPTOOL_BEFORE:-no_reset}" --after "${ESPTOOL_AFTER:-watchdog_reset}" write_flash @flash_args \
     "$offset" "${prov[0]}"
