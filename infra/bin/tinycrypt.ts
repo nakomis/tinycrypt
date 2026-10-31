@@ -26,8 +26,8 @@ new PushStack(app, 'TinycryptPushStack', {
 // One IoT Thing per physical key, listed per environment in infra/keys.json (CRYPT-26). Committed,
 // so every deploy declares every key: a key left out of a deploy would have its Thing deleted.
 const keyNames: string[] = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'keys.json'), 'utf8'))[deployEnv];
-if (!Array.isArray(keyNames) || keyNames.some(k => !/^key-[0-9]+$/.test(k)) || new Set(keyNames).size !== keyNames.length) {
-    throw new Error(`infra/keys.json: "${deployEnv}" must be a list of distinct names like key-1`);
+if (!Array.isArray(keyNames) || keyNames.some(k => typeof k !== 'string' || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(k) || k.length > 32) || new Set(keyNames).size !== keyNames.length) {
+    throw new Error(`infra/keys.json: "${deployEnv}" must be a list of distinct names like key-1 or nakomis (lower case, digits, single hyphens, at most 32)`);
 }
 
 new KeyStack(app, 'TinycryptKeyStack', {
