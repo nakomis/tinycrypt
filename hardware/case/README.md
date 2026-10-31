@@ -1,5 +1,27 @@
 # tinycrypt key case (CRYPT-16)
 
+**Current design: SolidCraft**, `tinycrypt-case.json` (31 Oct 2026; open it in SolidCraft). It rebuilds the
+Onshape case below natively and is what was printed in Elegoo ABS-like 3.0 Smoky Black:
+
+- **Shell:** a loft through 46 ellipses, every 2 mm along the length, measured from Onshape's loft (its
+  sections are true ellipses to within 0.1 mm, and the volume matches to 0.03 %). SolidCraft can't yet put
+  guide rails on a loft that ends in a point, or loft an ellipse to a point, so the profile splines
+  (sketch `Profile`) are kept for reference only and don't drive the shape. The +Z tip ends at Z 36, a
+  flat inside the cable channel.
+- **Parameters** (the design's parameter table): `board_w` 21, `board_cl` 0.25 (both openings are
+  `board_w + 2*board_cl` = 21.5 mm), `lip` (−`board_cl`: the front pocket is as wide as the back recess;
+  0.6 would clamp the board's edges instead), `board_z` −16, `split_y` 0, `screw_pitch` 12, `screw_gap`
+  2.5, `button_gap` 0.1, `led_skin` 1.
+- **LED:** no light pipe. A 3.5 mm blind window from inside leaves `led_skin` of resin over D1, so the
+  outside stays smooth and the LED shows through translucent resin. (For an opaque resin, cut it through
+  and print a pipe.)
+- **Split** at `split_y + 0.05 mm`: exactly at the board face, the plane sits on the loft's seam and on
+  faces 0.01 mm either side of it, and the kernel can't split there.
+- **Export each body on its own** (`export` with `bodies`): an all-bodies STL leaves the split faces as
+  loose patches.
+
+The Onshape version is below, kept for reference.
+
 The case is modelled in Onshape, in the public document
 [tinycrypt case](https://cad.onshape.com/documents/8f763e3ec3745cee324f3fdb). Its Part Studio holds
 Martin's shape (sketches and lofts, copied from his `tinycrypt` document) followed by one custom
