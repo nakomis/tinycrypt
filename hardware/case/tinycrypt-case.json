@@ -1,0 +1,3957 @@
+{
+  "format": "solidcraft/45",
+  "name": "tinycrypt-case",
+  "units": "mm",
+  "params": [
+    {
+      "name": "board_w",
+      "expr": "21 mm",
+      "unit": "mm",
+      "comment": "PCB width (KiCad Edge.Cuts)",
+      "model": false
+    },
+    {
+      "name": "board_cl",
+      "expr": "0.25 mm",
+      "unit": "mm",
+      "comment": "fit clearance per side: back recess is board_w + 2*board_cl",
+      "model": false
+    },
+    {
+      "name": "lip",
+      "expr": "-board_cl",
+      "unit": "mm",
+      "comment": "front pocket is this much narrower than the board per side (0.6 clamps it; -board_cl = same as the back recess)",
+      "model": false
+    },
+    {
+      "name": "split_y",
+      "expr": "0 mm",
+      "unit": "mm",
+      "comment": "split plane = board top face",
+      "model": false
+    },
+    {
+      "name": "board_z",
+      "expr": "-16 mm",
+      "unit": "mm",
+      "comment": "board centre along the length",
+      "model": false
+    },
+    {
+      "name": "screw_pitch",
+      "expr": "12 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "screw_gap",
+      "expr": "2.5 mm",
+      "unit": "mm",
+      "comment": "screw axis beyond the recess edge",
+      "model": false
+    },
+    {
+      "name": "button_gap",
+      "expr": "0.1 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "pipe_gap",
+      "expr": "0.1 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "led_skin",
+      "expr": "1 mm",
+      "unit": "mm",
+      "comment": "smoky resin left over the LED at the thinnest point (blind pocket from inside)",
+      "model": false
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Profile",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XZ"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              -37.235
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              4.521,
+              -29.344
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p3",
+            "pos": [
+              21.772,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p4",
+            "pos": [
+              11.789,
+              40.675
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p5",
+            "pos": [
+              0.0,
+              51.9
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p6",
+            "pos": [
+              0.0,
+              -37.235
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p7",
+            "pos": [
+              -4.521,
+              -29.344
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p8",
+            "pos": [
+              -21.772,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p9",
+            "pos": [
+              -11.789,
+              40.675
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p10",
+            "pos": [
+              0.0,
+              51.9
+            ],
+            "fixed": false
+          },
+          {
+            "id": "l1.start",
+            "pos": [
+              0.0,
+              -37.235
+            ],
+            "fixed": false
+          },
+          {
+            "id": "l1.end",
+            "pos": [
+              10.0,
+              -37.235
+            ],
+            "fixed": false
+          },
+          {
+            "id": "l2.start",
+            "pos": [
+              0.0,
+              51.9
+            ],
+            "fixed": false
+          },
+          {
+            "id": "l2.end",
+            "pos": [
+              10.0,
+              51.9
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "s1",
+            "type": "spline",
+            "pts": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "degree": 3,
+            "construction": false
+          },
+          {
+            "id": "s2",
+            "type": "spline",
+            "pts": [
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "degree": 3,
+            "construction": false
+          },
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 11,
+            "b": 12,
+            "construction": true,
+            "infinite": true
+          },
+          {
+            "id": "l2",
+            "type": "line",
+            "a": 13,
+            "b": 14,
+            "construction": true,
+            "infinite": true
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "horizontal",
+            "l": 2
+          },
+          {
+            "id": "k2",
+            "type": "horizontal",
+            "l": 3
+          },
+          {
+            "id": "k3",
+            "type": "fix",
+            "p": 1
+          },
+          {
+            "id": "k4",
+            "type": "fix",
+            "p": 2
+          },
+          {
+            "id": "k5",
+            "type": "fix",
+            "p": 3
+          },
+          {
+            "id": "k6",
+            "type": "fix",
+            "p": 4
+          },
+          {
+            "id": "k7",
+            "type": "fix",
+            "p": 5
+          },
+          {
+            "id": "k8",
+            "type": "fix",
+            "p": 6
+          },
+          {
+            "id": "k9",
+            "type": "fix",
+            "p": 7
+          },
+          {
+            "id": "k10",
+            "type": "fix",
+            "p": 8
+          },
+          {
+            "id": "k11",
+            "type": "fix",
+            "p": 9
+          },
+          {
+            "id": "k12",
+            "type": "fix",
+            "p": 10
+          },
+          {
+            "id": "k13",
+            "type": "tangent",
+            "a": 0,
+            "b": 2
+          },
+          {
+            "id": "k14",
+            "type": "tangent",
+            "a": 1,
+            "b": 2
+          },
+          {
+            "id": "k15",
+            "type": "tangent",
+            "a": 0,
+            "b": 3
+          },
+          {
+            "id": "k16",
+            "type": "tangent",
+            "a": 1,
+            "b": 3
+          }
+        ],
+        "counters": {
+          "k": 16,
+          "l": 2,
+          "p": 10,
+          "s": 2
+        }
+      }
+    },
+    {
+      "id": 6,
+      "name": "Sp36_0",
+      "suppressed": false,
+      "param_names": [
+        "d2"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "36.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              2.779,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 1.287,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 7,
+      "name": "Sp34_0",
+      "suppressed": false,
+      "param_names": [
+        "d4"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "34.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              3.491,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 2.152,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 8,
+      "name": "Sp32_0",
+      "suppressed": false,
+      "param_names": [
+        "d5"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "32.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              3.859,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 2.824,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 9,
+      "name": "Sp30_0",
+      "suppressed": false,
+      "param_names": [
+        "d6"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "30.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              4.315,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 3.414,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 10,
+      "name": "Sp28_0",
+      "suppressed": false,
+      "param_names": [
+        "d7"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "28.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              5.076,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 3.968,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 11,
+      "name": "Sp26_0",
+      "suppressed": false,
+      "param_names": [
+        "d8"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "26.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              6.129,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 4.509,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 12,
+      "name": "Sp24_0",
+      "suppressed": false,
+      "param_names": [
+        "d9"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "24.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              7.412,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 5.025,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 13,
+      "name": "Sp22_0",
+      "suppressed": false,
+      "param_names": [
+        "d10"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "22.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              8.847,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 5.523,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 14,
+      "name": "Sp20_0",
+      "suppressed": false,
+      "param_names": [
+        "d11"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "20.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              10.36,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 6.009,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 15,
+      "name": "Sp18_0",
+      "suppressed": false,
+      "param_names": [
+        "d12"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "18.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              11.899,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 6.471,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 16,
+      "name": "Sp16_0",
+      "suppressed": false,
+      "param_names": [
+        "d13"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "16.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              13.432,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 6.921,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 17,
+      "name": "Sp14_0",
+      "suppressed": false,
+      "param_names": [
+        "d14"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "14.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              14.911,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 7.358,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 18,
+      "name": "Sp12_0",
+      "suppressed": false,
+      "param_names": [
+        "d15"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "12.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              16.314,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 7.776,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 19,
+      "name": "Sp10_0",
+      "suppressed": false,
+      "param_names": [
+        "d16"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "10.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              17.6,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 8.188,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 20,
+      "name": "Sp8_0",
+      "suppressed": false,
+      "param_names": [
+        "d17"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "8.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              18.758,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 8.581,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 21,
+      "name": "Sp6_0",
+      "suppressed": false,
+      "param_names": [
+        "d18"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "6.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              19.768,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 8.966,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 22,
+      "name": "Sp4_0",
+      "suppressed": false,
+      "param_names": [
+        "d19"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "4.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              20.613,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 9.34,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 23,
+      "name": "Sp2_0",
+      "suppressed": false,
+      "param_names": [
+        "d20"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "2.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              21.281,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 9.703,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 24,
+      "name": "Sp0_0",
+      "suppressed": false,
+      "param_names": [
+        "d21"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "0.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              21.768,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 10.059,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 25,
+      "name": "Sm2_0",
+      "suppressed": false,
+      "param_names": [
+        "d22"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-2.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              22.074,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 10.405,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 26,
+      "name": "Sm4_0",
+      "suppressed": false,
+      "param_names": [
+        "d23"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-4.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              22.211,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 10.748,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 27,
+      "name": "Sm6_0",
+      "suppressed": false,
+      "param_names": [
+        "d24"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-6.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              22.205,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 11.079,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 28,
+      "name": "Sm8_0",
+      "suppressed": false,
+      "param_names": [
+        "d25"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-8.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              22.074,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 11.397,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 29,
+      "name": "Sm10_0",
+      "suppressed": false,
+      "param_names": [
+        "d26"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-10.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              21.832,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 11.705,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 30,
+      "name": "Sm12_0",
+      "suppressed": false,
+      "param_names": [
+        "d27"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-12.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              21.493,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 11.976,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 31,
+      "name": "Sm14_0",
+      "suppressed": false,
+      "param_names": [
+        "d28"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-14.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              21.068,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 12.223,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 32,
+      "name": "Sm16_0",
+      "suppressed": false,
+      "param_names": [
+        "d29"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-16.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              20.569,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 12.44,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 33,
+      "name": "Sm18_0",
+      "suppressed": false,
+      "param_names": [
+        "d30"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-18.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              20.002,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 12.593,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 34,
+      "name": "Sm20_0",
+      "suppressed": false,
+      "param_names": [
+        "d31"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-20.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              19.379,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 12.708,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 35,
+      "name": "Sm22_0",
+      "suppressed": false,
+      "param_names": [
+        "d32"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-22.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              18.709,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 12.745,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 36,
+      "name": "Sm24_0",
+      "suppressed": false,
+      "param_names": [
+        "d33"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-24.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              17.997,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 12.715,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 37,
+      "name": "Sm26_0",
+      "suppressed": false,
+      "param_names": [
+        "d34"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-26.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              17.254,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 12.602,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 38,
+      "name": "Sm28_0",
+      "suppressed": false,
+      "param_names": [
+        "d35"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-28.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              16.486,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 12.408,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 39,
+      "name": "Sm30_0",
+      "suppressed": false,
+      "param_names": [
+        "d36"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-30.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              15.705,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 12.124,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 40,
+      "name": "Sm32_0",
+      "suppressed": false,
+      "param_names": [
+        "d37"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-32.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              14.922,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 11.751,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 41,
+      "name": "Sm34_0",
+      "suppressed": false,
+      "param_names": [
+        "d38"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-34.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              14.141,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 11.286,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 42,
+      "name": "Sm36_0",
+      "suppressed": false,
+      "param_names": [
+        "d39"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-36.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              13.384,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 10.722,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 43,
+      "name": "Sm38_0",
+      "suppressed": false,
+      "param_names": [
+        "d40"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-38.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              12.664,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 10.066,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 44,
+      "name": "Sm40_0",
+      "suppressed": false,
+      "param_names": [
+        "d41"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-40.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              11.998,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 9.29,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 45,
+      "name": "Sm42_0",
+      "suppressed": false,
+      "param_names": [
+        "d42"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-42.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              11.421,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 8.404,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 46,
+      "name": "Sm44_0",
+      "suppressed": false,
+      "param_names": [
+        "d43"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-44.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              10.895,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 7.367,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 47,
+      "name": "Sm46_0",
+      "suppressed": false,
+      "param_names": [
+        "d44"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-46.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              10.322,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 6.153,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 48,
+      "name": "Sm48_0",
+      "suppressed": false,
+      "param_names": [
+        "d45"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-48.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              9.492,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 4.749,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 49,
+      "name": "Sm50_0",
+      "suppressed": false,
+      "param_names": [
+        "d46"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-50.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              7.859,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 3.233,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 50,
+      "name": "Sm51_0",
+      "suppressed": false,
+      "param_names": [
+        "d47"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-51.0"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              6.113,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 2.227,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 51,
+      "name": "Sm51_6",
+      "suppressed": false,
+      "param_names": [
+        "d48"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-51.6"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              3.947,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 1.303,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 55,
+      "name": "Sm51_8",
+      "suppressed": false,
+      "param_names": [
+        "d49"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-51.8"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              2.422,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 0.76,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 56,
+      "name": "Sm51_88",
+      "suppressed": false,
+      "param_names": [
+        "d50"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "-51.88"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              1.08,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "e1",
+            "type": "ellipse",
+            "c": 1,
+            "m": 2,
+            "r": 0.34,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "e": 1,
+          "p": 2
+        }
+      }
+    },
+    {
+      "id": 57,
+      "name": "ShellBody",
+      "suppressed": false,
+      "body_names": [
+        "Case front"
+      ],
+      "type": "loft",
+      "sections": [
+        {
+          "sketch": 6,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 7,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 8,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 9,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 10,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 11,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 12,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 13,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 14,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 15,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 16,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 17,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 18,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 19,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 20,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 21,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 22,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 23,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 24,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 25,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 26,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 27,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 28,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 29,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 30,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 31,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 32,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 33,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 34,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 35,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 36,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 37,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 38,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 39,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 40,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 41,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 42,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 43,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 44,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 45,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 46,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 47,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 48,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 49,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 50,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 51,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 55,
+          "profiles": {
+            "type": "all"
+          }
+        },
+        {
+          "sketch": 56,
+          "profiles": {
+            "type": "all"
+          }
+        }
+      ],
+      "operation": "new_body"
+    },
+    {
+      "id": 58,
+      "name": "PlungerShaft",
+      "suppressed": false,
+      "body_names": [
+        "Button plunger"
+      ],
+      "param_names": [
+        "d51",
+        "d52"
+      ],
+      "type": "cylinder",
+      "base": [
+        "3.6 - board_w/2",
+        "split_y + 1.55",
+        "board_z + 19.55 - 15"
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "radius": "1.6",
+      "height": "20 - split_y - 1.55",
+      "operation": "new_body"
+    },
+    {
+      "id": 59,
+      "name": "PlungerFlange",
+      "suppressed": false,
+      "param_names": [
+        "d53",
+        "d54"
+      ],
+      "participants": [
+        "Button plunger"
+      ],
+      "type": "cylinder",
+      "base": [
+        "3.6 - board_w/2",
+        "split_y + 1.55",
+        "board_z + 19.55 - 15"
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "radius": "2.7",
+      "height": "0.8",
+      "operation": "join"
+    },
+    {
+      "id": 61,
+      "name": "Combine1",
+      "suppressed": false,
+      "type": "combine",
+      "target": "Button plunger",
+      "tools": [
+        "Case front"
+      ],
+      "operation": "intersect",
+      "keep_tools": true
+    },
+    {
+      "id": 63,
+      "name": "BoardRecess",
+      "suppressed": false,
+      "param_names": [
+        "d57",
+        "d58",
+        "d59"
+      ],
+      "participants": [
+        "Case front"
+      ],
+      "type": "box",
+      "corner": [
+        "-board_w/2 - board_cl",
+        "split_y - 1.6 - board_cl",
+        "board_z - 20.05 - board_cl"
+      ],
+      "length": "board_w + 2*board_cl",
+      "width": "1.6 + board_cl + 0.01",
+      "height": "40 + 2*board_cl",
+      "operation": "cut"
+    },
+    {
+      "id": 64,
+      "name": "PartsPocket",
+      "suppressed": false,
+      "param_names": [
+        "d60",
+        "d61",
+        "d62"
+      ],
+      "participants": [
+        "Case front"
+      ],
+      "type": "box",
+      "corner": [
+        "-board_w/2 + lip",
+        "split_y - 0.01",
+        "board_z - 20.05 - board_cl"
+      ],
+      "length": "board_w - 2*lip",
+      "width": "3.3 + 0.01",
+      "height": "40 + 2*board_cl",
+      "operation": "cut"
+    },
+    {
+      "id": 65,
+      "name": "J1Bay",
+      "suppressed": false,
+      "param_names": [
+        "d63",
+        "d64",
+        "d65"
+      ],
+      "participants": [
+        "Case front"
+      ],
+      "type": "box",
+      "corner": [
+        "10.5 - board_w/2 - 4.5",
+        "split_y - 0.01",
+        "board_z + 15"
+      ],
+      "length": "9",
+      "width": "3.61",
+      "height": "8.95",
+      "operation": "cut"
+    },
+    {
+      "id": 66,
+      "name": "CableChannel",
+      "suppressed": false,
+      "param_names": [
+        "d66",
+        "d67"
+      ],
+      "participants": [
+        "Case front"
+      ],
+      "type": "cylinder",
+      "base": [
+        "10.5 - board_w/2",
+        "split_y + 1.2",
+        "board_z + 34.95 - 15 - 1"
+      ],
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "radius": "1.7",
+      "height": "40",
+      "operation": "cut"
+    },
+    {
+      "id": 67,
+      "name": "ButtonBore",
+      "suppressed": false,
+      "param_names": [
+        "d68",
+        "d69"
+      ],
+      "participants": [
+        "Case front"
+      ],
+      "type": "cylinder",
+      "base": [
+        "3.6 - board_w/2",
+        "split_y",
+        "board_z + 19.55 - 15"
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "radius": "1.6 + button_gap",
+      "height": "20",
+      "operation": "cut"
+    },
+    {
+      "id": 68,
+      "name": "FlangeWell",
+      "suppressed": false,
+      "param_names": [
+        "d70",
+        "d71"
+      ],
+      "participants": [
+        "Case front"
+      ],
+      "type": "cylinder",
+      "base": [
+        "3.6 - board_w/2",
+        "split_y",
+        "board_z + 19.55 - 15"
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "radius": "2.7 + button_gap",
+      "height": "3.3",
+      "operation": "cut"
+    },
+    {
+      "id": 69,
+      "name": "LEDBore",
+      "suppressed": false,
+      "param_names": [
+        "d72",
+        "d73"
+      ],
+      "participants": [
+        "Case front"
+      ],
+      "type": "cylinder",
+      "base": [
+        "7.65 - board_w/2",
+        "split_y",
+        "board_z + 18.15 - 15"
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "radius": "1.75",
+      "height": "11.7 - led_skin - split_y",
+      "operation": "cut"
+    },
+    {
+      "id": 70,
+      "name": "ScrewClear",
+      "suppressed": false,
+      "param_names": [
+        "d74",
+        "d75"
+      ],
+      "participants": [
+        "Case front"
+      ],
+      "type": "cylinder",
+      "base": [
+        "-(board_w/2 + board_cl + screw_gap)",
+        -20.0,
+        "board_z - screw_pitch/2"
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "radius": "1.15",
+      "height": "20 + split_y + 0.01",
+      "operation": "cut"
+    },
+    {
+      "id": 71,
+      "name": "ScrewHead",
+      "suppressed": false,
+      "param_names": [
+        "d76",
+        "d77"
+      ],
+      "participants": [
+        "Case front"
+      ],
+      "type": "cylinder",
+      "base": [
+        "-(board_w/2 + board_cl + screw_gap)",
+        -20.0,
+        "board_z - screw_pitch/2"
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "radius": "2.1",
+      "height": "20 + split_y - 4",
+      "operation": "cut"
+    },
+    {
+      "id": 72,
+      "name": "ScrewPilot",
+      "suppressed": false,
+      "param_names": [
+        "d78",
+        "d79"
+      ],
+      "participants": [
+        "Case front"
+      ],
+      "type": "cylinder",
+      "base": [
+        "-(board_w/2 + board_cl + screw_gap)",
+        "split_y - 0.01",
+        "board_z - screw_pitch/2"
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "radius": "0.8",
+      "height": "6.51",
+      "operation": "cut"
+    },
+    {
+      "id": 73,
+      "name": "Screws",
+      "suppressed": false,
+      "param_names": [
+        "d80",
+        "d81",
+        "d82",
+        "d83"
+      ],
+      "type": "pattern",
+      "features": [
+        70,
+        71,
+        72
+      ],
+      "pattern": {
+        "type": "rectangular",
+        "dir1": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "count1": "2",
+        "spacing1": "2*(board_w/2 + board_cl + screw_gap)",
+        "dir2": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "count2": "2",
+        "spacing2": "screw_pitch"
+      }
+    },
+    {
+      "id": 74,
+      "name": "PinH1",
+      "suppressed": false,
+      "param_names": [
+        "d84",
+        "d85"
+      ],
+      "participants": [
+        "Case front"
+      ],
+      "type": "cylinder",
+      "base": [
+        "16.2 - board_w/2",
+        "split_y - 1.6 - board_cl",
+        "board_z + 18.8 - 15"
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "radius": "1",
+      "height": "1.6 + board_cl - 0.1",
+      "operation": "join"
+    },
+    {
+      "id": 75,
+      "name": "PinH2",
+      "suppressed": false,
+      "param_names": [
+        "d86",
+        "d87"
+      ],
+      "participants": [
+        "Case front"
+      ],
+      "type": "cylinder",
+      "base": [
+        "3.0 - board_w/2",
+        "split_y - 1.6 - board_cl",
+        "board_z + 32.15 - 15"
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "radius": "1",
+      "height": "1.6 + board_cl - 0.1",
+      "operation": "join"
+    },
+    {
+      "id": 76,
+      "name": "Split1",
+      "suppressed": false,
+      "body_names": [
+        "Case back"
+      ],
+      "type": "split",
+      "body": "Case front",
+      "plane": {
+        "type": "placed",
+        "origin": [
+          0.0,
+          "split_y + 0.05 mm",
+          0.0
+        ],
+        "x_dir": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "y_dir": [
+          0.0,
+          -0.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "next_id": 77,
+  "next_component_color_index": 0
+}
