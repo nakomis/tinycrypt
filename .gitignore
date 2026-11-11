@@ -112,3 +112,6 @@ Package.resolved
 # Node / CDK
 node_modules/
 cdk.out/
+
+# SolidCraft keeps a lock file next to an open design
+.~*.lock
