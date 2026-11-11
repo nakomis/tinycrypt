@@ -3953,5 +3953,19 @@
     }
   ],
   "next_id": 77,
-  "next_component_color_index": 0
+  "next_component_color_index": 0,
+  "visibility": {
+    "hidden_bodies": [
+      "Button plunger",
+      "Case back"
+    ],
+    "hidden_occurrences": [],
+    "hidden_origin": [],
+    "hidden_sketches": [],
+    "shown_sketches": [],
+    "origin_hidden": true,
+    "hidden_folders": [
+      "c0/sketches"
+    ]
+  }
 }
